@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/orchestra/v1/internal/git"
+	"github.com/orchestra/v1/internal/project"
 	"github.com/orchestra/v1/internal/state"
 	"github.com/orchestra/v1/internal/tmux"
 )
@@ -40,25 +42,33 @@ func (m *Manager) saveAll(agents []Agent) error {
 	return state.WriteJSON(m.path, agents)
 }
 
+// SpawnOptions configures how an agent is spawned.
+type SpawnOptions struct {
+	Name    string
+	Role    Role
+	Project *project.Project // nil = isolated workspace
+	Repo    *project.Repo    // nil = isolated workspace
+}
+
 // Spawn creates a new agent with a tmux session running Claude Code.
-func (m *Manager) Spawn(name string) (*Agent, error) {
+func (m *Manager) Spawn(opts SpawnOptions) (*Agent, error) {
 	// Check if agent already exists
 	agents, err := m.loadAll()
 	if err != nil {
 		return nil, err
 	}
 	for _, a := range agents {
-		if a.Name == name {
-			return nil, fmt.Errorf("agent %q already exists", name)
+		if a.Name == opts.Name {
+			return nil, fmt.Errorf("agent %q already exists", opts.Name)
 		}
 	}
 
-	session := m.sessionName(name)
-	workDir := filepath.Join(m.workspacesDir, name)
+	session := m.sessionName(opts.Name)
 
-	// Create workspace directory
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		return nil, fmt.Errorf("create workspace: %w", err)
+	// Determine working directory
+	workDir, worktreeDir, err := m.resolveWorkDir(opts)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create tmux session
@@ -66,9 +76,9 @@ func (m *Manager) Spawn(name string) (*Agent, error) {
 		return nil, fmt.Errorf("create tmux session: %w", err)
 	}
 
-	// cd into workspace
+	// cd into working directory
 	if err := tmux.SendKeys(session, "cd "+workDir); err != nil {
-		tmux.KillSession(session) // cleanup on failure
+		tmux.KillSession(session)
 		return nil, fmt.Errorf("cd to workspace: %w", err)
 	}
 
@@ -78,21 +88,32 @@ func (m *Manager) Spawn(name string) (*Agent, error) {
 		return nil, fmt.Errorf("launch claude: %w", err)
 	}
 
-	// Accept startup dialogs (workspace trust + bypass permissions warning).
-	// Claude shows these interactively; we poll the pane and press Enter.
-	// Same approach gastown uses.
+	// Accept startup dialogs (workspace trust + bypass permissions warning)
 	if err := tmux.AcceptStartupDialogs(session); err != nil {
-		// Non-fatal — agent may still work, just log and continue
-		fmt.Fprintf(os.Stderr, "warning: could not auto-accept dialogs for %s: %v\n", name, err)
+		fmt.Fprintf(os.Stderr, "warning: could not auto-accept dialogs for %s: %v\n", opts.Name, err)
+	}
+
+	role := opts.Role
+	if role == "" {
+		role = RoleWorker
 	}
 
 	agent := Agent{
-		ID:        name, // use name as ID for simplicity in v1
-		Name:      name,
-		Status:    StatusIdle,
-		Session:   session,
-		WorkDir:   workDir,
-		CreatedAt: time.Now(),
+		ID:          opts.Name,
+		Name:        opts.Name,
+		Status:      StatusIdle,
+		Role:        role,
+		Session:     session,
+		WorkDir:     workDir,
+		WorktreeDir: worktreeDir,
+		CreatedAt:   time.Now(),
+	}
+
+	if opts.Project != nil {
+		agent.ProjectID = opts.Project.ID
+	}
+	if opts.Repo != nil {
+		agent.RepoName = opts.Repo.Name
 	}
 
 	agents = append(agents, agent)
@@ -104,7 +125,38 @@ func (m *Manager) Spawn(name string) (*Agent, error) {
 	return &agent, nil
 }
 
-// Kill destroys an agent's tmux session and removes it from the registry.
+// resolveWorkDir determines where the agent should work.
+// Returns (workDir, worktreeDir, error). worktreeDir is non-empty only if a worktree was created.
+func (m *Manager) resolveWorkDir(opts SpawnOptions) (string, string, error) {
+	// No repo → isolated workspace (original v1 behavior)
+	if opts.Repo == nil {
+		workDir := filepath.Join(m.workspacesDir, opts.Name)
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			return "", "", fmt.Errorf("create workspace: %w", err)
+		}
+		return workDir, "", nil
+	}
+
+	// Repo is a git repo → create worktree
+	if opts.Repo.IsGitRepo {
+		projectName := "default"
+		if opts.Project != nil {
+			projectName = opts.Project.Name
+		}
+		worktreePath := filepath.Join(m.workspacesDir, projectName, opts.Name)
+
+		branchName := "orch/" + opts.Name
+		if err := git.WorktreeAdd(opts.Repo.Path, worktreePath, branchName); err != nil {
+			return "", "", fmt.Errorf("create worktree: %w", err)
+		}
+		return worktreePath, worktreePath, nil
+	}
+
+	// Repo is not a git repo → work directly in the repo path
+	return opts.Repo.Path, "", nil
+}
+
+// Kill destroys an agent's tmux session, cleans up worktrees, and removes from registry.
 func (m *Manager) Kill(name string) error {
 	agents, err := m.loadAll()
 	if err != nil {
@@ -116,9 +168,16 @@ func (m *Manager) Kill(name string) error {
 	for _, a := range agents {
 		if a.Name == name {
 			found = true
+			// Kill tmux session
 			session := m.sessionName(name)
 			if tmux.HasSession(session) {
 				tmux.KillSession(session)
+			}
+			// Clean up worktree if one was created
+			if a.WorktreeDir != "" && a.RepoName != "" {
+				// We need the repo path to remove the worktree.
+				// The worktree remove command works with just the path.
+				git.WorktreeRemove(a.WorkDir, a.WorktreeDir)
 			}
 		} else {
 			remaining = append(remaining, a)
@@ -139,10 +198,9 @@ func (m *Manager) List() ([]Agent, error) {
 		return nil, err
 	}
 
-	// Check which sessions are actually alive
 	for i := range agents {
 		if !tmux.HasSession(agents[i].Session) {
-			agents[i].Status = StatusFailed // session died
+			agents[i].Status = StatusFailed
 		}
 	}
 
@@ -200,14 +258,11 @@ func (m *Manager) Assign(name string, prompt string) error {
 		return fmt.Errorf("agent %q session is not running", name)
 	}
 
-	// Write prompt to a file in the agent's workspace so it's not truncated by tmux
 	promptFile := filepath.Join(agent.WorkDir, ".task-prompt")
 	if err := os.WriteFile(promptFile, []byte(prompt), 0644); err != nil {
 		return fmt.Errorf("write prompt file: %w", err)
 	}
 
-	// Send the prompt content via tmux send-keys
-	// For long prompts, we pipe the file content
 	cmd := fmt.Sprintf("cat %s", promptFile)
 	return tmux.SendKeys(agent.Session, cmd)
 }
