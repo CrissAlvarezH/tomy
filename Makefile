@@ -1,8 +1,9 @@
 BINARY    := orchestra
 CMD_DIR   := ./cmd
 BUILD_DIR := ./build
-STATE_DIR := ./state
-WORK_DIR  := ./workspaces
+ORCH_HOME := $(HOME)/.orchestra
+STATE_DIR := $(ORCH_HOME)/state
+WORK_DIR  := $(ORCH_HOME)/workspaces
 
 GO       := go
 GOFLAGS  :=
@@ -42,12 +43,12 @@ check: fmt vet test ## Run fmt + vet + test
 clean: ## Remove build artifacts
 	rm -rf $(BUILD_DIR)
 
-reset: ## Wipe all state (agents.json, tasks.json) — does NOT kill tmux sessions
+reset: ## Wipe state files (~/.orchestra/state/) — does NOT kill tmux sessions
 	rm -f $(STATE_DIR)/agents.json $(STATE_DIR)/tasks.json
 	@echo "State files cleared."
 
-nuke: kill-all ## Kill all sessions + wipe state + remove workspaces
-	rm -rf $(STATE_DIR) $(WORK_DIR)
+nuke: kill-all ## Kill all sessions + wipe ~/.orchestra entirely
+	rm -rf $(ORCH_HOME)
 	@echo "Everything wiped clean."
 
 ## ---- Agent shortcuts ----

@@ -75,16 +75,16 @@ orchestra run --title "..." --desc "..." --agent bob   # Same but name the agent
 ```
 orchestra agent spawn toast
         │
-        ├─ 1. Creates workspace directory:  ./workspaces/toast/
+        ├─ 1. Creates workspace directory:  ~/.orchestra/workspaces/toast/
         ├─ 2. Starts tmux session:          orch-toast
-        ├─ 3. Runs inside tmux:             cd ./workspaces/toast/
+        ├─ 3. Runs inside tmux:             cd ~/.orchestra/workspaces/toast/
         ├─ 4. Runs inside tmux:             claude --dangerously-skip-permissions
-        └─ 5. Registers agent in:           ./state/agents.json
+        └─ 5. Registers agent in:           ~/.orchestra/state/agents.json
 
 orchestra task assign <id> toast
         │
-        ├─ 1. Reads task from:              ./state/tasks.json
-        ├─ 2. Writes prompt to:             ./workspaces/toast/.task-prompt
+        ├─ 1. Reads task from:              ~/.orchestra/state/tasks.json
+        ├─ 2. Writes prompt to:             ~/.orchestra/workspaces/toast/.task-prompt
         ├─ 3. Sends to tmux session:        cat .task-prompt
         ├─ 4. Updates task status:          pending → assigned
         └─ 5. Updates agent status:         idle → working
@@ -111,11 +111,6 @@ clone-v1/
 │   │   └── config.go          # Resolves state/ and workspaces/ directories
 │   └── state/
 │       └── store.go           # Generic JSON read/write with syscall.Flock
-├── state/                     # Runtime state (created automatically)
-│   ├── agents.json            # Agent registry
-│   └── tasks.json             # Task list
-├── workspaces/                # Per-agent working directories (created automatically)
-│   └── <agent-name>/
 ├── build/                     # Compiled binary (created by make build)
 ├── Makefile
 ├── go.mod
@@ -141,9 +136,25 @@ make agents      Shortcut for agent list
 make tasks       Shortcut for task list
 ```
 
+## Data Directory
+
+All runtime data lives in `~/.orchestra/`:
+
+```
+~/.orchestra/
+├── state/
+│   ├── agents.json       # Agent registry
+│   └── tasks.json        # Task list
+└── workspaces/
+    ├── toast/            # Agent toast's working directory
+    └── butter/           # Agent butter's working directory
+```
+
+Override with `ORCHESTRA_HOME=/custom/path` env var.
+
 ## State Files
 
-All state is stored as JSON files in `./state/`. Concurrent access is safe — reads use shared locks (`LOCK_SH`) and writes use exclusive locks (`LOCK_EX`) via `syscall.Flock`.
+All state is stored as JSON files in `~/.orchestra/state/`. Concurrent access is safe — reads use shared locks (`LOCK_SH`) and writes use exclusive locks (`LOCK_EX`) via `syscall.Flock`.
 
 **agents.json** — array of agents:
 ```json

@@ -5,23 +5,30 @@ import (
 	"path/filepath"
 )
 
+// Default home: ~/.orchestra
+// Override with ORCHESTRA_HOME env var.
+
 type Config struct {
-	RootDir       string // Project root (where orchestra is run from)
-	StateDir      string // state/ directory for JSON files
-	WorkspacesDir string // workspaces/ directory for agent working dirs
+	HomeDir       string // ~/.orchestra (or $ORCHESTRA_HOME)
+	StateDir      string // ~/.orchestra/state
+	WorkspacesDir string // ~/.orchestra/workspaces
 	SessionPrefix string // tmux session name prefix
 }
 
 func Load() (*Config, error) {
-	root, err := os.Getwd()
-	if err != nil {
-		return nil, err
+	home := os.Getenv("ORCHESTRA_HOME")
+	if home == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		home = filepath.Join(userHome, ".orchestra")
 	}
 
 	cfg := &Config{
-		RootDir:       root,
-		StateDir:      filepath.Join(root, "state"),
-		WorkspacesDir: filepath.Join(root, "workspaces"),
+		HomeDir:       home,
+		StateDir:      filepath.Join(home, "state"),
+		WorkspacesDir: filepath.Join(home, "workspaces"),
 		SessionPrefix: "orch",
 	}
 
