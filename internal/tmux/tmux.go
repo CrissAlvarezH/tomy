@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -78,6 +79,58 @@ func ListSessions() ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(out, "\n"), nil
+}
+
+// CapturePane captures the visible content of a tmux pane.
+func CapturePane(name string, lines int) (string, error) {
+	if err := validateName(name); err != nil {
+		return "", err
+	}
+	start := fmt.Sprintf("-%d", lines)
+	return run("capture-pane", "-t", name, "-p", "-S", start)
+}
+
+// AcceptStartupDialogs polls the tmux pane for Claude's workspace trust dialog
+// and bypass permissions warning, accepting them by pressing Enter.
+// This is the same approach gastown uses (poll + send Enter).
+func AcceptStartupDialogs(name string) error {
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		content, err := CapturePane(name, 30)
+		if err != nil {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		// Detect trust dialog
+		if strings.Contains(content, "Quick safety check") ||
+			strings.Contains(content, "trust this folder") {
+			// "Yes, I trust this folder" is pre-selected — just press Enter
+			run("send-keys", "-t", name, "Enter")
+			time.Sleep(500 * time.Millisecond)
+			// Continue polling — bypass permissions warning may follow
+			continue
+		}
+
+		// Detect bypass permissions warning
+		if strings.Contains(content, "Bypass Permissions mode") {
+			run("send-keys", "-t", name, "Enter")
+			time.Sleep(500 * time.Millisecond)
+			return nil
+		}
+
+		// If we see the Claude prompt, startup is done
+		for _, line := range strings.Split(content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == ">" || strings.HasSuffix(trimmed, "❯") {
+				return nil
+			}
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return nil // timeout — proceed anyway
 }
 
 // AttachSession attaches to an existing session (replaces current process).
