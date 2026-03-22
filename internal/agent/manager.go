@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/orchestra/v1/internal/state"
@@ -59,6 +60,12 @@ func (m *Manager) Spawn(name string) (*Agent, error) {
 	// Create workspace directory
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return nil, fmt.Errorf("create workspace: %w", err)
+	}
+
+	// Pre-trust the workspace so Claude skips the trust dialog.
+	// Claude Code stores trusted projects in ~/.claude/projects/<mangled-path>/
+	if err := preTrustWorkspace(workDir); err != nil {
+		return nil, fmt.Errorf("pre-trust workspace: %w", err)
 	}
 
 	// Create tmux session
@@ -202,4 +209,21 @@ func (m *Manager) Assign(name string, prompt string) error {
 	// For long prompts, we pipe the file content
 	cmd := fmt.Sprintf("cat %s", promptFile)
 	return tmux.SendKeys(agent.Session, cmd)
+}
+
+// preTrustWorkspace creates the Claude Code project directory so the workspace
+// is recognized as trusted and the trust dialog is skipped on launch.
+// Claude stores projects at ~/.claude/projects/<mangled-path>/ where the path
+// has slashes replaced with dashes and leading slash becomes a dash.
+func preTrustWorkspace(workDir string) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	// Claude mangles paths: "/Users/foo/bar" → "-Users-foo-bar"
+	mangled := strings.ReplaceAll(workDir, string(filepath.Separator), "-")
+
+	projectDir := filepath.Join(homeDir, ".claude", "projects", mangled)
+	return os.MkdirAll(projectDir, 0755)
 }
