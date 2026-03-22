@@ -1,6 +1,6 @@
-# Orchestra v1 — Core Agent Management
+# Orchestra v1 — Multi-Agent Claude Code Orchestrator
 
-A CLI tool that spawns and manages multiple Claude Code sessions as autonomous agents using tmux. Inspired by [Gas Town](https://github.com/steveyegge/gastown).
+A CLI tool that manages projects with multiple repos, spawns Claude Code agents in tmux sessions, and coordinates work through a Lead agent. Inspired by [Gas Town](https://github.com/steveyegge/gastown).
 
 Zero external dependencies — Go stdlib only.
 
@@ -16,42 +16,72 @@ Zero external dependencies — Go stdlib only.
 # Build
 make build
 
-# Spawn an agent
-./build/orchestra agent spawn toast
+# Create a project and add your repos
+orchestra project create my-app
+orchestra repo add /path/to/backend --name backend
+orchestra repo add /path/to/frontend --name frontend
 
-# Create a task
-./build/orchestra task create --title "Build a REST API" --desc "Create a Go HTTP server with GET /health endpoint"
-
-# Assign the task (use the ID printed by the previous command)
-./build/orchestra task assign <task-id> toast
-
-# Watch the agent work
-./build/orchestra agent attach toast
+# Start the lead — you'll plan work interactively with it
+orchestra lead start
 ```
 
-Detach from tmux with `Ctrl+B` then `D`.
+Inside the lead session, discuss your goal. The lead will create tasks, spawn workers in the right repos, and assign work — all using `orchestra` commands.
+
+Detach from tmux with `Ctrl+B` then `D`. Re-attach with `orchestra lead attach`.
 
 ## Installation
 
 ```bash
 make install    # copies binary to ~/.local/bin/orchestra
-```
-
-Make sure `~/.local/bin` is in your PATH. Then use `orchestra` from anywhere.
-
-```bash
 make uninstall  # removes it
 ```
 
+Make sure `~/.local/bin` is in your PATH.
+
+## Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Project** | A named group (e.g. "my-ecommerce"). Contains repos and tasks. |
+| **Repo** | A directory/git repo within a project (e.g. "backend"). Agents work in repos. |
+| **Lead** | An interactive Claude session where you plan work. It spawns workers and assigns tasks. |
+| **Agent** | A Claude Code session in tmux. Workers get git worktrees for isolation. |
+| **Task** | A unit of work with a title and description. Assigned to one agent. |
+
 ## Commands
+
+### Project Management
+
+```bash
+orchestra project create <name>            # Create a project (auto-set as active)
+orchestra project list                     # List all projects
+orchestra project set <name>               # Switch active project
+orchestra project status                   # Show active project details
+```
+
+### Repo Management
+
+```bash
+orchestra repo add <path> [--name <name>]  # Add a repo to active project
+orchestra repo list                        # List repos in active project
+orchestra repo remove <name>               # Remove a repo
+```
+
+### Lead (Interactive Orchestrator)
+
+```bash
+orchestra lead start                       # Spawn lead + auto-attach
+orchestra lead attach                      # Re-attach to lead's session
+orchestra lead stop                        # Kill the lead
+```
 
 ### Agent Management
 
 ```bash
-orchestra agent spawn <name>     # Create agent with tmux session + Claude Code
-orchestra agent list             # Show all agents with status
-orchestra agent kill <name>      # Kill agent's tmux session and deregister
-orchestra agent attach <name>    # Attach terminal to agent's tmux session
+orchestra agent spawn <name> [--repo <r>]  # Spawn agent (in a repo's worktree if --repo)
+orchestra agent list                       # Show all agents with status
+orchestra agent kill <name>                # Kill agent + clean up worktree
+orchestra agent attach <name>              # Attach to agent's tmux session
 ```
 
 ### Task Management
@@ -66,31 +96,48 @@ orchestra task assign <task-id> <agent-name>        # Assign task to an idle age
 ### All-in-One
 
 ```bash
-orchestra run --title "..." --desc "..."              # Create task + spawn agent + assign
-orchestra run --title "..." --desc "..." --agent bob   # Same but name the agent
+orchestra run --title "..." --desc "..." [--repo <r>] [--agent <name>]
 ```
+
+Creates a task, spawns an agent, and assigns in one command.
 
 ## How It Works
 
+### With a Project (recommended)
+
+```
+orchestra project create my-ecommerce
+orchestra repo add /path/to/backend --name backend
+orchestra repo add /path/to/frontend --name frontend
+orchestra lead start
+```
+
+The lead spawns in the first repo's directory with a system prompt listing all repos and available commands. You discuss the goal, and the lead runs:
+
+```
+orchestra task create --title "Add user model" --desc "..."
+orchestra agent spawn db-worker --repo backend
+orchestra task assign abc123 db-worker
+```
+
+Workers spawned with `--repo` on a git repo get **git worktrees** — isolated branches of the same codebase:
+
+```
+db-worker  → ~/.orchestra/workspaces/my-ecommerce/db-worker/  (branch: orch/db-worker)
+api-worker → ~/.orchestra/workspaces/my-ecommerce/api-worker/ (branch: orch/api-worker)
+ui-worker  → ~/.orchestra/workspaces/my-ecommerce/ui-worker/  (branch: orch/ui-worker)
+```
+
+### Without a Project (standalone agents)
+
 ```
 orchestra agent spawn toast
-        │
-        ├─ 1. Creates workspace directory:  ~/.orchestra/workspaces/toast/
-        ├─ 2. Starts tmux session:          orch-toast
-        ├─ 3. Runs inside tmux:             cd ~/.orchestra/workspaces/toast/
-        ├─ 4. Runs inside tmux:             claude --dangerously-skip-permissions
-        └─ 5. Registers agent in:           ~/.orchestra/state/agents.json
-
+orchestra task create --title "Build a hello world" --desc "..."
 orchestra task assign <id> toast
-        │
-        ├─ 1. Reads task from:              ~/.orchestra/state/tasks.json
-        ├─ 2. Writes prompt to:             ~/.orchestra/workspaces/toast/.task-prompt
-        ├─ 3. Sends to tmux session:        cat .task-prompt
-        ├─ 4. Updates task status:          pending → assigned
-        └─ 5. Updates agent status:         idle → working
+orchestra agent attach toast
 ```
 
-The agent (Claude Code) receives the prompt and works autonomously from there.
+Agents get isolated workspaces at `~/.orchestra/workspaces/<name>/`.
 
 ## Project Structure
 
@@ -100,18 +147,26 @@ clone-v1/
 │   └── main.go                # CLI entry point — subcommand router
 ├── internal/
 │   ├── agent/
-│   │   ├── types.go           # Agent struct and status enum
-│   │   └── manager.go         # Spawn, kill, list, assign, attach
+│   │   ├── types.go           # Agent struct (status, role, project, repo, worktree)
+│   │   └── manager.go         # Spawn (with worktrees), kill, list, assign, attach
+│   ├── project/
+│   │   ├── types.go           # Project and Repo structs
+│   │   └── store.go           # Project CRUD, repo add/remove, active project
+│   ├── lead/
+│   │   ├── lead.go            # Lead start/stop/attach lifecycle
+│   │   └── prompt.go          # System prompt template for the lead
+│   ├── git/
+│   │   └── git.go             # Git worktree add/remove, IsGitRepo
 │   ├── task/
 │   │   ├── types.go           # Task struct and status enum
 │   │   └── store.go           # CRUD on tasks.json with file locking
 │   ├── tmux/
-│   │   └── tmux.go            # tmux wrapper (new-session, kill, send-keys, list)
+│   │   └── tmux.go            # tmux wrapper (sessions, send-keys, capture-pane)
 │   ├── config/
-│   │   └── config.go          # Resolves state/ and workspaces/ directories
+│   │   └── config.go          # Resolves ~/.orchestra directories
 │   └── state/
 │       └── store.go           # Generic JSON read/write with syscall.Flock
-├── build/                     # Compiled binary (created by make build)
+├── build/                     # Compiled binary
 ├── Makefile
 ├── go.mod
 └── README.md
@@ -121,7 +176,7 @@ clone-v1/
 
 ```
 make build       Build the binary to ./build/orchestra
-make run ARGS=   Build and run (e.g. make run ARGS="agent list")
+make run ARGS=   Build and run (e.g. make run ARGS="project status")
 make install     Copy binary to ~/.local/bin
 make uninstall   Remove from ~/.local/bin
 make fmt         Format Go files
@@ -131,7 +186,7 @@ make check       fmt + vet + test
 make clean       Remove build artifacts
 make reset       Wipe state files (does not kill tmux sessions)
 make kill-all    Kill all orch-* tmux sessions
-make nuke        Kill sessions + wipe state + remove workspaces
+make nuke        Kill sessions + wipe ~/.orchestra entirely
 make agents      Shortcut for agent list
 make tasks       Shortcut for task list
 ```
@@ -143,81 +198,56 @@ All runtime data lives in `~/.orchestra/`:
 ```
 ~/.orchestra/
 ├── state/
-│   ├── agents.json       # Agent registry
-│   └── tasks.json        # Task list
+│   ├── agents.json            # Agent registry
+│   ├── tasks.json             # Task list
+│   ├── projects.json          # Project registry
+│   └── active_project.json    # Currently active project pointer
 └── workspaces/
-    ├── toast/            # Agent toast's working directory
-    └── butter/           # Agent butter's working directory
+    ├── standalone-agent/      # Standalone agent (no project)
+    └── my-ecommerce/          # Project-scoped worktrees
+        ├── db-worker/         # Git worktree (branch: orch/db-worker)
+        └── api-worker/        # Git worktree (branch: orch/api-worker)
 ```
 
-Override with `ORCHESTRA_HOME=/custom/path` env var.
+Override location with `ORCHESTRA_HOME=/custom/path` env var.
 
-## State Files
-
-All state is stored as JSON files in `~/.orchestra/state/`. Concurrent access is safe — reads use shared locks (`LOCK_SH`) and writes use exclusive locks (`LOCK_EX`) via `syscall.Flock`.
-
-**agents.json** — array of agents:
-```json
-[
-  {
-    "id": "toast",
-    "name": "toast",
-    "status": "working",
-    "task_id": "a1b2c3d4",
-    "session": "orch-toast",
-    "work_dir": "/path/to/workspaces/toast",
-    "created_at": "2026-03-22T10:00:00Z"
-  }
-]
-```
-
-**tasks.json** — array of tasks:
-```json
-[
-  {
-    "id": "a1b2c3d4",
-    "title": "Build a REST API",
-    "description": "Create a Go HTTP server with GET /health endpoint",
-    "status": "assigned",
-    "assigned_to": "toast",
-    "created_at": "2026-03-22T10:00:00Z",
-    "updated_at": "2026-03-22T10:01:00Z"
-  }
-]
-```
-
-## Example: Multiple Agents Working in Parallel
+## Example: Full Workflow
 
 ```bash
-# Create tasks
-orchestra task create --title "Set up database models" --desc "Create SQLite schema for users and posts"
-orchestra task create --title "Build HTTP handlers" --desc "Create CRUD endpoints for /users and /posts"
-orchestra task create --title "Write tests" --desc "Add unit tests for the handlers"
+# Set up project
+orchestra project create my-api
+orchestra repo add ~/code/my-api-backend --name backend
 
-# Spawn agents and assign
-orchestra run --title "Set up database models" --desc "..." --agent db-worker
-orchestra run --title "Build HTTP handlers" --desc "..." --agent api-worker
+# Start the lead and plan together
+orchestra lead start
 
-# Check progress
+# (Inside the lead session, you discuss and it creates tasks + spawns workers)
+# Detach with Ctrl+B D
+
+# Check progress from outside
 orchestra agent list
 orchestra task list
 
-# Watch a specific agent
+# Attach to a worker to see its progress
 orchestra agent attach api-worker
 
+# Re-attach to the lead
+orchestra lead attach
+
 # When done, clean up
+orchestra lead stop
 make kill-all
 ```
 
-## Limitations (v1)
+## Limitations
 
 - No task dependencies — tasks are independent
-- No orchestrator — you manually create tasks and assign them
 - No memory — agents don't share context between sessions
 - No inter-agent communication — agents can't talk to each other
 - No completion detection — you check status manually
+- Lead doesn't auto-monitor — you plan interactively, it doesn't poll
 
-These are addressed in v2 (orchestrator), v3 (memory), and v4 (communication).
+These are addressed in v2 (automated orchestrator), v3 (memory), and v4 (communication).
 
 ## Dependencies
 
@@ -228,7 +258,8 @@ None. The entire project uses Go standard library:
 | CLI flags | `flag` |
 | JSON state | `encoding/json` |
 | File locking | `syscall` |
-| Run tmux | `os/exec` |
+| Run tmux/git | `os/exec` |
 | Session name validation | `regexp` |
 | ID generation | `crypto/rand` |
 | Table output | `text/tabwriter` |
+| Prompt template | `text/template` |
