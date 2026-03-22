@@ -1,0 +1,6 @@
+# Build artifacts
+/build/
+
+# Runtime state
+/state/
+/workspaces/
