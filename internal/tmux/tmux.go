@@ -3,6 +3,7 @@ package tmux
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -133,14 +134,21 @@ func AcceptStartupDialogs(name string) error {
 	return nil // timeout — proceed anyway
 }
 
-// AttachSession attaches to an existing session (replaces current process).
+// AttachSession switches to an existing session. If already inside tmux,
+// uses switch-client; otherwise uses attach-session.
 func AttachSession(name string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	cmd := exec.Command("tmux", "attach-session", "-t", name)
-	cmd.Stdin = nil // inherit from parent handled by syscall
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+
+	action := "attach-session"
+	if os.Getenv("TMUX") != "" {
+		action = "switch-client"
+	}
+
+	cmd := exec.Command("tmux", action, "-t", name)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
