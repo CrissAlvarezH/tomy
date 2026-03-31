@@ -117,7 +117,7 @@ func main() {
 		}
 		switch os.Args[2] {
 		case "start":
-			cmdPlannerStart(workers, projects)
+			cmdPlannerStart(workers, projects, cfg.PlannerDir)
 		case "stop":
 			cmdPlannerStop(workers)
 		case "attach":
@@ -324,7 +324,7 @@ func cmdRepoRemove(args []string, store *project.Store, proj *project.Project) {
 
 // --- Planner commands ---
 
-func cmdPlannerStart(mgr *worker.Manager, projStore *project.Store) {
+func cmdPlannerStart(mgr *worker.Manager, projStore *project.Store, plannerDir string) {
 	projects, err := projStore.List()
 	if err != nil {
 		fatal(err.Error())
@@ -356,7 +356,7 @@ func cmdPlannerStart(mgr *worker.Manager, projStore *project.Store) {
 	// Set as active project for worker commands
 	projStore.SetActive(proj.ID)
 
-	if err := planner.Start(mgr, proj); err != nil {
+	if err := planner.Start(mgr, proj, plannerDir); err != nil {
 		fatal(err.Error())
 	}
 }

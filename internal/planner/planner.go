@@ -13,14 +13,12 @@ import (
 const PlannerName = "planner"
 
 // Start spawns the planner session for the given project and attaches to it.
-func Start(mgr *worker.Manager, proj *project.Project) error {
-	// Determine the planner's working directory
-	var workDir string
-	if len(proj.Repos) > 0 {
-		workDir = proj.Repos[0].Path
-	} else {
-		workDir = filepath.Join(os.TempDir(), "orchestra-planner-"+proj.Name)
-		os.MkdirAll(workDir, 0755)
+// plannerBaseDir is ~/.orchestra/planner/
+func Start(mgr *worker.Manager, proj *project.Project, plannerBaseDir string) error {
+	// Planner lives in its own directory: ~/.orchestra/planner/<project>/
+	workDir := filepath.Join(plannerBaseDir, proj.Name)
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return fmt.Errorf("create planner dir: %w", err)
 	}
 
 	// Render the system prompt
@@ -29,10 +27,10 @@ func Start(mgr *worker.Manager, proj *project.Project) error {
 		return fmt.Errorf("render planner prompt: %w", err)
 	}
 
-	// Write prompt file to the working directory
-	promptFile := filepath.Join(workDir, ".orchestra-planner-prompt.md")
-	if err := os.WriteFile(promptFile, []byte(promptContent), 0644); err != nil {
-		return fmt.Errorf("write planner prompt: %w", err)
+	// Write prompt as CLAUDE.md so it persists through /clear
+	claudeMdPath := filepath.Join(workDir, "CLAUDE.md")
+	if err := os.WriteFile(claudeMdPath, []byte(promptContent), 0644); err != nil {
+		return fmt.Errorf("write CLAUDE.md: %w", err)
 	}
 
 	// Spawn the planner as a worker entry (for session tracking)
@@ -52,8 +50,8 @@ func Start(mgr *worker.Manager, proj *project.Project) error {
 	// cd into the project's first repo
 	tmux.SendKeys(session, "cd "+workDir)
 
-	// Build claude command with system prompt and --add-dir for all repos
-	claudeCmd := "claude --dangerously-skip-permissions --append-system-prompt-file " + promptFile
+	// Build claude command — CLAUDE.md is auto-read by Claude Code
+	claudeCmd := "claude --dangerously-skip-permissions"
 	for _, repo := range proj.Repos {
 		claudeCmd += " --add-dir " + repo.Path
 	}
