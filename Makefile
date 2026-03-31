@@ -8,14 +8,14 @@ WORK_DIR  := $(ORCH_HOME)/workspaces
 GO       := go
 GOFLAGS  :=
 
-.PHONY: build run clean reset install uninstall fmt vet test check agents tasks kill-all help
+.PHONY: build run clean reset install uninstall fmt vet test check workers tasks kill-all help
 
 ## ---- Build ----
 
 build: ## Build the orchestra binary
 	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/$(BINARY) $(CMD_DIR)
 
-run: build ## Build and run (pass ARGS, e.g. make run ARGS="agent list")
+run: build ## Build and run (pass ARGS, e.g. make run ARGS="worker list")
 	$(BUILD_DIR)/$(BINARY) $(ARGS)
 
 install: build ## Copy binary to ~/.local/bin
@@ -44,17 +44,17 @@ clean: ## Remove build artifacts
 	rm -rf $(BUILD_DIR)
 
 reset: ## Wipe state files (~/.orchestra/state/) — does NOT kill tmux sessions
-	rm -f $(STATE_DIR)/agents.json $(STATE_DIR)/tasks.json
+	rm -f $(STATE_DIR)/workers.json $(STATE_DIR)/tasks.json
 	@echo "State files cleared."
 
 nuke: kill-all ## Kill all sessions + wipe ~/.orchestra entirely
 	rm -rf $(ORCH_HOME)
 	@echo "Everything wiped clean."
 
-## ---- Agent shortcuts ----
+## ---- Worker shortcuts ----
 
-agents: build ## List all agents
-	$(BUILD_DIR)/$(BINARY) agent list
+workers: build ## List all workers
+	$(BUILD_DIR)/$(BINARY) worker list
 
 tasks: build ## List all tasks
 	$(BUILD_DIR)/$(BINARY) task list

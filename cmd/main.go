@@ -8,11 +8,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/orchestra/v1/internal/agent"
 	"github.com/orchestra/v1/internal/config"
-	"github.com/orchestra/v1/internal/lead"
+	"github.com/orchestra/v1/internal/planner"
 	"github.com/orchestra/v1/internal/project"
 	"github.com/orchestra/v1/internal/task"
+	"github.com/orchestra/v1/internal/worker"
 )
 
 func fatal(msg string) {
@@ -31,7 +31,7 @@ func main() {
 		fatal(err.Error())
 	}
 
-	agents := agent.NewManager(cfg.StateDir, cfg.WorkspacesDir, cfg.SessionPrefix)
+	workers := worker.NewManager(cfg.StateDir, cfg.WorkspacesDir, cfg.SessionPrefix)
 	tasks := task.NewStore(cfg.StateDir)
 	projects := project.NewStore(cfg.StateDir)
 
@@ -39,21 +39,21 @@ func main() {
 	activeProj, _ := projects.GetActive()
 
 	switch os.Args[1] {
-	case "agent":
+	case "worker":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra agent <spawn|list|kill|attach>")
+			fatal("usage: orchestra worker <spawn|list|kill|attach>")
 		}
 		switch os.Args[2] {
 		case "spawn":
-			cmdAgentSpawn(os.Args[3:], agents, activeProj, projects)
+			cmdWorkerSpawn(os.Args[3:], workers, activeProj)
 		case "list":
-			cmdAgentList(agents)
+			cmdWorkerList(workers)
 		case "kill":
-			cmdAgentKill(os.Args[3:], agents)
+			cmdWorkerKill(os.Args[3:], workers)
 		case "attach":
-			cmdAgentAttach(os.Args[3:], agents)
+			cmdWorkerAttach(os.Args[3:], workers)
 		default:
-			fatal("unknown agent subcommand: " + os.Args[2])
+			fatal("unknown worker subcommand: " + os.Args[2])
 		}
 
 	case "task":
@@ -68,7 +68,7 @@ func main() {
 		case "status":
 			cmdTaskStatus(os.Args[3:], tasks)
 		case "assign":
-			cmdTaskAssign(os.Args[3:], tasks, agents)
+			cmdTaskAssign(os.Args[3:], tasks, workers)
 		default:
 			fatal("unknown task subcommand: " + os.Args[2])
 		}
@@ -85,7 +85,7 @@ func main() {
 		case "set":
 			cmdProjectSet(os.Args[3:], projects)
 		case "status":
-			cmdProjectStatus(projects, agents)
+			cmdProjectStatus(projects, workers)
 		default:
 			fatal("unknown project subcommand: " + os.Args[2])
 		}
@@ -105,23 +105,26 @@ func main() {
 			fatal("unknown repo subcommand: " + os.Args[2])
 		}
 
-	case "lead":
+	case "planner":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra lead <start|stop|attach>")
+			fatal("usage: orchestra planner <start|stop|attach>")
 		}
 		switch os.Args[2] {
 		case "start":
-			cmdLeadStart(agents, activeProj)
+			cmdPlannerStart(workers, projects)
 		case "stop":
-			cmdLeadStop(agents)
+			cmdPlannerStop(workers)
 		case "attach":
-			cmdLeadAttach(agents)
+			cmdPlannerAttach(workers)
 		default:
-			fatal("unknown lead subcommand: " + os.Args[2])
+			fatal("unknown planner subcommand: " + os.Args[2])
 		}
 
+	case "done":
+		cmdDone(os.Args[2:], tasks, workers)
+
 	case "run":
-		cmdRun(os.Args[2:], tasks, agents, activeProj, projects)
+		cmdRun(os.Args[2:], tasks, workers, activeProj)
 
 	case "help", "--help", "-h":
 		printUsage()
@@ -144,21 +147,23 @@ Usage:
   orchestra repo list                                List repos in active project
   orchestra repo remove <name>                       Remove a repo
 
-  orchestra lead start                               Spawn lead + attach (interactive planning)
-  orchestra lead stop                                Kill the lead agent
-  orchestra lead attach                              Attach to lead's session
+  orchestra planner start                            Select project + spawn planner (interactive)
+  orchestra planner stop                             Kill the planner session
+  orchestra planner attach                           Attach to planner's session
 
-  orchestra agent spawn <name> [--repo <repo>]       Spawn a worker agent
-  orchestra agent list                               List all agents
-  orchestra agent kill <name>                        Kill an agent
-  orchestra agent attach <name>                      Attach to agent's session
+  orchestra worker spawn <name>                      Spawn a worker (worktrees for all project repos)
+  orchestra worker list                              List all workers
+  orchestra worker kill <name>                       Kill a worker
+  orchestra worker attach <name>                     Attach to worker's session
 
   orchestra task create --title "..." --desc "..."   Create a task
   orchestra task list                                List all tasks
   orchestra task status <task-id>                    Show task details
-  orchestra task assign <task-id> <agent-name>       Assign task to agent
+  orchestra task assign <task-id> <worker-name>      Assign task to worker
 
-  orchestra run --title "..." --desc "..." [--repo <repo>]  Create + spawn + assign`)
+  orchestra done <worker-name>                       Mark worker and its task as done
+
+  orchestra run --title "..." --desc "..."           Create + spawn + assign (all-in-one)`)
 }
 
 // --- Project commands ---
@@ -212,7 +217,7 @@ func cmdProjectSet(args []string, store *project.Store) {
 	fmt.Printf("Active project: %s\n", p.Name)
 }
 
-func cmdProjectStatus(store *project.Store, mgr *agent.Manager) {
+func cmdProjectStatus(store *project.Store, mgr *worker.Manager) {
 	proj, _ := store.GetActive()
 	if proj == nil {
 		fmt.Println("No active project. Create one with: orchestra project create <name>")
@@ -229,14 +234,14 @@ func cmdProjectStatus(store *project.Store, mgr *agent.Manager) {
 		fmt.Printf("  - %s: %s%s\n", r.Name, r.Path, gitLabel)
 	}
 
-	agents, _ := mgr.List()
-	projectAgents := 0
-	for _, a := range agents {
-		if a.ProjectID == proj.ID {
-			projectAgents++
+	workers, _ := mgr.List()
+	projectWorkers := 0
+	for _, w := range workers {
+		if w.ProjectID == proj.ID {
+			projectWorkers++
 		}
 	}
-	fmt.Printf("Agents:  %d\n", projectAgents)
+	fmt.Printf("Workers: %d\n", projectWorkers)
 }
 
 // --- Repo commands ---
@@ -308,96 +313,111 @@ func cmdRepoRemove(args []string, store *project.Store, proj *project.Project) {
 	fmt.Printf("Removed repo %q\n", args[0])
 }
 
-// --- Lead commands ---
+// --- Planner commands ---
 
-func cmdLeadStart(mgr *agent.Manager, proj *project.Project) {
-	requireActiveProject(proj)
-	if err := lead.Start(mgr, proj); err != nil {
+func cmdPlannerStart(mgr *worker.Manager, projStore *project.Store) {
+	projects, err := projStore.List()
+	if err != nil {
 		fatal(err.Error())
 	}
-}
-
-func cmdLeadStop(mgr *agent.Manager) {
-	if err := lead.Stop(mgr); err != nil {
-		fatal(err.Error())
+	if len(projects) == 0 {
+		fatal("no projects. Create one with: orchestra project create <name>")
 	}
-	fmt.Println("Lead stopped.")
-}
 
-func cmdLeadAttach(mgr *agent.Manager) {
-	if err := lead.Attach(mgr); err != nil {
-		fatal(err.Error())
-	}
-}
-
-// --- Agent commands ---
-
-func cmdAgentSpawn(args []string, mgr *agent.Manager, proj *project.Project, projStore *project.Store) {
-	fs := flag.NewFlagSet("agent spawn", flag.ExitOnError)
-	repoName := fs.String("repo", "", "Repo to work in (from active project)")
-	fs.Parse(args)
-
-	if fs.NArg() < 1 {
-		fatal("usage: orchestra agent spawn <name> [--repo <repo-name>]")
-	}
-	name := fs.Arg(0)
-
-	opts := agent.SpawnOptions{Name: name}
-
-	if *repoName != "" {
-		requireActiveProject(proj)
-		repo, err := projStore.GetRepo(proj, *repoName)
-		if err != nil {
-			fatal(err.Error())
+	var proj *project.Project
+	if len(projects) == 1 {
+		proj = &projects[0]
+		fmt.Printf("Using project: %s\n", proj.Name)
+	} else {
+		fmt.Println("Select a project:")
+		for i, p := range projects {
+			fmt.Printf("  %d) %s (%d repos)\n", i+1, p.Name, len(p.Repos))
 		}
-		opts.Project = proj
-		opts.Repo = repo
+		fmt.Print("\nEnter number: ")
+		var choice int
+		if _, err := fmt.Scan(&choice); err != nil {
+			fatal("invalid input")
+		}
+		if choice < 1 || choice > len(projects) {
+			fatal("invalid selection")
+		}
+		proj = &projects[choice-1]
 	}
 
-	a, err := mgr.Spawn(opts)
-	if err != nil {
+	// Set as active project for worker commands
+	projStore.SetActive(proj.ID)
+
+	if err := planner.Start(mgr, proj); err != nil {
 		fatal(err.Error())
 	}
-	fmt.Printf("Spawned agent %q (session: %s, workdir: %s)\n", a.Name, a.Session, a.WorkDir)
 }
 
-func cmdAgentList(mgr *agent.Manager) {
-	agents, err := mgr.List()
+func cmdPlannerStop(mgr *worker.Manager) {
+	if err := planner.Stop(mgr); err != nil {
+		fatal(err.Error())
+	}
+	fmt.Println("Planner stopped.")
+}
+
+func cmdPlannerAttach(mgr *worker.Manager) {
+	if err := planner.Attach(mgr); err != nil {
+		fatal(err.Error())
+	}
+}
+
+// --- Worker commands ---
+
+func cmdWorkerSpawn(args []string, mgr *worker.Manager, proj *project.Project) {
+	if len(args) < 1 {
+		fatal("usage: orchestra worker spawn <name>")
+	}
+	name := args[0]
+
+	requireActiveProject(proj)
+
+	w, err := mgr.Spawn(worker.SpawnOptions{
+		Name:    name,
+		Project: proj,
+	})
 	if err != nil {
 		fatal(err.Error())
 	}
-	if len(agents) == 0 {
-		fmt.Println("No agents running.")
+	fmt.Printf("Spawned worker %q (session: %s, workdir: %s, worktrees: %d)\n",
+		w.Name, w.Session, w.WorkDir, len(w.WorktreeDirs))
+}
+
+func cmdWorkerList(mgr *worker.Manager) {
+	workers, err := mgr.List()
+	if err != nil {
+		fatal(err.Error())
+	}
+	if len(workers) == 0 {
+		fmt.Println("No workers running.")
 		return
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tROLE\tSTATUS\tREPO\tTASK\tSESSION")
-	for _, a := range agents {
-		taskID := valueOr(a.TaskID, "-")
-		repo := valueOr(a.RepoName, "-")
-		role := string(a.Role)
-		if role == "" {
-			role = "worker"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, role, a.Status, repo, taskID, a.Session)
+	fmt.Fprintln(w, "NAME\tSTATUS\tTASK\tWORKTREES\tSESSION")
+	for _, wk := range workers {
+		taskID := valueOr(wk.TaskID, "-")
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", wk.Name, wk.Status, taskID, len(wk.WorktreeDirs), wk.Session)
 	}
 	w.Flush()
 }
 
-func cmdAgentKill(args []string, mgr *agent.Manager) {
+func cmdWorkerKill(args []string, mgr *worker.Manager) {
 	if len(args) < 1 {
-		fatal("usage: orchestra agent kill <name>")
+		fatal("usage: orchestra worker kill <name>")
 	}
 	if err := mgr.Kill(args[0]); err != nil {
 		fatal(err.Error())
 	}
-	fmt.Printf("Killed agent %q\n", args[0])
+	fmt.Printf("Killed worker %q\n", args[0])
 }
 
-func cmdAgentAttach(args []string, mgr *agent.Manager) {
+func cmdWorkerAttach(args []string, mgr *worker.Manager) {
 	if len(args) < 1 {
-		fatal("usage: orchestra agent attach <name>")
+		fatal("usage: orchestra worker attach <name>")
 	}
 	if err := mgr.Attach(args[0]); err != nil {
 		fatal(err.Error())
@@ -470,12 +490,12 @@ func cmdTaskStatus(args []string, store *task.Store) {
 	}
 }
 
-func cmdTaskAssign(args []string, store *task.Store, mgr *agent.Manager) {
+func cmdTaskAssign(args []string, store *task.Store, mgr *worker.Manager) {
 	if len(args) < 2 {
-		fatal("usage: orchestra task assign <task-id> <agent-name>")
+		fatal("usage: orchestra task assign <task-id> <worker-name>")
 	}
 	taskID := args[0]
-	agentName := args[1]
+	workerName := args[1]
 
 	t, err := store.Get(taskID)
 	if err != nil {
@@ -485,44 +505,45 @@ func cmdTaskAssign(args []string, store *task.Store, mgr *agent.Manager) {
 		fatal(fmt.Sprintf("task %s is %s, can only assign pending tasks", taskID, t.Status))
 	}
 
-	a, err := mgr.Get(agentName)
+	w, err := mgr.Get(workerName)
 	if err != nil {
 		fatal(err.Error())
 	}
-	if a.Status != agent.StatusIdle {
-		fatal(fmt.Sprintf("agent %s is %s, can only assign to idle agents", agentName, a.Status))
+	if w.Status != worker.StatusIdle {
+		fatal(fmt.Sprintf("worker %s is %s, can only assign to idle workers", workerName, w.Status))
 	}
 
-	prompt := buildPrompt(t)
-	if err := mgr.Assign(agentName, prompt); err != nil {
+	prompt := buildPrompt(t, workerName)
+	if err := mgr.Assign(workerName, prompt); err != nil {
 		fatal(err.Error())
 	}
 
 	store.Update(taskID, func(t *task.Task) {
 		t.Status = task.StatusAssigned
-		t.AssignedTo = agentName
+		t.AssignedTo = workerName
 	})
-	mgr.Update(agentName, func(a *agent.Agent) {
-		a.Status = agent.StatusWorking
-		a.TaskID = taskID
+	mgr.Update(workerName, func(w *worker.Worker) {
+		w.Status = worker.StatusWorking
+		w.TaskID = taskID
 	})
 
-	fmt.Printf("Assigned task %s to agent %s\n", taskID, agentName)
+	fmt.Printf("Assigned task %s to worker %s\n", taskID, workerName)
 }
 
 // --- Run command (convenience) ---
 
-func cmdRun(args []string, store *task.Store, mgr *agent.Manager, proj *project.Project, projStore *project.Store) {
+func cmdRun(args []string, store *task.Store, mgr *worker.Manager, proj *project.Project) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	title := fs.String("title", "", "Task title (required)")
 	desc := fs.String("desc", "", "Task description / prompt")
-	agentName := fs.String("agent", "", "Agent name (auto-generated if empty)")
-	repoName := fs.String("repo", "", "Repo to work in (from active project)")
+	workerName := fs.String("worker", "", "Worker name (auto-generated if empty)")
 	fs.Parse(args)
 
 	if *title == "" {
 		fatal("--title is required")
 	}
+
+	requireActiveProject(proj)
 
 	t, err := store.Create(*title, *desc)
 	if err != nil {
@@ -530,29 +551,21 @@ func cmdRun(args []string, store *task.Store, mgr *agent.Manager, proj *project.
 	}
 	fmt.Printf("Created task %s: %s\n", t.ID, t.Title)
 
-	name := *agentName
+	name := *workerName
 	if name == "" {
-		name = "agent-" + t.ID
+		name = "worker-" + t.ID
 	}
 
-	opts := agent.SpawnOptions{Name: name}
-	if *repoName != "" {
-		requireActiveProject(proj)
-		repo, err := projStore.GetRepo(proj, *repoName)
-		if err != nil {
-			fatal(err.Error())
-		}
-		opts.Project = proj
-		opts.Repo = repo
-	}
-
-	a, err := mgr.Spawn(opts)
+	w, err := mgr.Spawn(worker.SpawnOptions{
+		Name:    name,
+		Project: proj,
+	})
 	if err != nil {
 		fatal(err.Error())
 	}
-	fmt.Printf("Spawned agent %q (session: %s)\n", a.Name, a.Session)
+	fmt.Printf("Spawned worker %q (session: %s)\n", w.Name, w.Session)
 
-	prompt := buildPrompt(t)
+	prompt := buildPrompt(t, name)
 	if err := mgr.Assign(name, prompt); err != nil {
 		fatal(err.Error())
 	}
@@ -561,24 +574,59 @@ func cmdRun(args []string, store *task.Store, mgr *agent.Manager, proj *project.
 		t.Status = task.StatusAssigned
 		t.AssignedTo = name
 	})
-	mgr.Update(name, func(a *agent.Agent) {
-		a.Status = agent.StatusWorking
-		a.TaskID = t.ID
+	mgr.Update(name, func(w *worker.Worker) {
+		w.Status = worker.StatusWorking
+		w.TaskID = t.ID
 	})
 
-	fmt.Printf("Assigned task %s to agent %s\n", t.ID, name)
-	fmt.Printf("\nAttach with: orchestra agent attach %s\n", name)
+	fmt.Printf("Assigned task %s to worker %s\n", t.ID, name)
+	fmt.Printf("\nAttach with: orchestra worker attach %s\n", name)
+}
+
+// --- Done command ---
+
+func cmdDone(args []string, store *task.Store, mgr *worker.Manager) {
+	if len(args) < 1 {
+		fatal("usage: orchestra done <worker-name>")
+	}
+	workerName := args[0]
+
+	w, err := mgr.Get(workerName)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	// Mark the worker's task as done
+	if w.TaskID != "" {
+		store.Update(w.TaskID, func(t *task.Task) {
+			t.Status = task.StatusDone
+		})
+		fmt.Printf("Task %s marked as done.\n", w.TaskID)
+	}
+
+	// Mark the worker as idle
+	mgr.Update(workerName, func(w *worker.Worker) {
+		w.Status = worker.StatusDone
+		w.TaskID = ""
+	})
+	fmt.Printf("Worker %s marked as done.\n", workerName)
 }
 
 // --- Helpers ---
 
-func buildPrompt(t *task.Task) string {
+func buildPrompt(t *task.Task, workerName string) string {
 	var b strings.Builder
 	b.WriteString(t.Title)
 	if t.Description != "" {
 		b.WriteString("\n\n")
 		b.WriteString(t.Description)
 	}
+	b.WriteString("\n\n---\n")
+	b.WriteString("IMPORTANT: When you have completed this task:\n")
+	b.WriteString("1. Commit your changes in each repo you modified\n")
+	b.WriteString("2. Push your branches: git push -u origin HEAD (in each repo)\n")
+	b.WriteString("3. Create a PR targeting develop: gh pr create --base develop --fill\n")
+	b.WriteString("4. Mark yourself as done: orchestra done " + workerName + "\n")
 	return b.String()
 }
 
@@ -588,4 +636,3 @@ func valueOr(s, fallback string) string {
 	}
 	return s
 }
-

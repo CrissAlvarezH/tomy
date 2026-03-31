@@ -1,6 +1,6 @@
 # Orchestra v1 — Multi-Agent Claude Code Orchestrator
 
-A CLI tool that manages projects with multiple repos, spawns Claude Code agents in tmux sessions, and coordinates work through a Lead agent. Inspired by [Gas Town](https://github.com/steveyegge/gastown).
+A CLI tool that manages projects with multiple repos, spawns Claude Code workers in tmux sessions, and coordinates work through a Planner session. Inspired by [Gas Town](https://github.com/steveyegge/gastown).
 
 Zero external dependencies — Go stdlib only.
 
@@ -9,6 +9,7 @@ Zero external dependencies — Go stdlib only.
 - **Go** 1.22+ — `brew install go`
 - **tmux** — `brew install tmux`
 - **Claude Code** — installed and authenticated (`claude` available in PATH)
+- **GitHub CLI** — `brew install gh` (workers use it to create PRs)
 
 ## Quick Start
 
@@ -21,13 +22,13 @@ orchestra project create my-app
 orchestra repo add /path/to/backend --name backend
 orchestra repo add /path/to/frontend --name frontend
 
-# Start the lead — you'll plan work interactively with it
-orchestra lead start
+# Start the planner — you'll plan work interactively with it
+orchestra planner start
 ```
 
-Inside the lead session, discuss your goal. The lead will create tasks, spawn workers in the right repos, and assign work — all using `orchestra` commands.
+Inside the planner session, discuss your goal. The planner will create tasks, spawn workers, and assign work — all using `orchestra` commands. Workers get git worktrees for all project repos and create PRs targeting `develop` when done.
 
-Detach from tmux with `Ctrl+B` then `D`. Re-attach with `orchestra lead attach`.
+Detach from tmux with `Ctrl+B` then `D`. Re-attach with `orchestra planner attach`.
 
 ## Installation
 
@@ -43,10 +44,10 @@ Make sure `~/.local/bin` is in your PATH.
 | Concept | Description |
 |---------|-------------|
 | **Project** | A named group (e.g. "my-ecommerce"). Contains repos and tasks. |
-| **Repo** | A directory/git repo within a project (e.g. "backend"). Agents work in repos. |
-| **Lead** | An interactive Claude session where you plan work. It spawns workers and assigns tasks. |
-| **Agent** | A Claude Code session in tmux. Workers get git worktrees for isolation. |
-| **Task** | A unit of work with a title and description. Assigned to one agent. |
+| **Repo** | A directory/git repo within a project. Workers get worktrees of each repo. |
+| **Planner** | An interactive Claude session where you plan work. It spawns workers and assigns tasks. |
+| **Worker** | A Claude Code session in tmux with git worktrees for all project repos. Creates PRs to `develop` when done. |
+| **Task** | A unit of work with a title and description. Assigned to one worker. |
 
 ## Commands
 
@@ -67,21 +68,21 @@ orchestra repo list                        # List repos in active project
 orchestra repo remove <name>               # Remove a repo
 ```
 
-### Lead (Interactive Orchestrator)
+### Planner (Interactive Orchestrator)
 
 ```bash
-orchestra lead start                       # Spawn lead + auto-attach
-orchestra lead attach                      # Re-attach to lead's session
-orchestra lead stop                        # Kill the lead
+orchestra planner start                    # Select project + spawn planner + auto-attach
+orchestra planner attach                   # Re-attach to planner's session
+orchestra planner stop                     # Kill the planner
 ```
 
-### Agent Management
+### Worker Management
 
 ```bash
-orchestra agent spawn <name> [--repo <r>]  # Spawn agent (in a repo's worktree if --repo)
-orchestra agent list                       # Show all agents with status
-orchestra agent kill <name>                # Kill agent + clean up worktree
-orchestra agent attach <name>              # Attach to agent's tmux session
+orchestra worker spawn <name>              # Spawn worker (worktrees for all project repos)
+orchestra worker list                      # Show all workers with status
+orchestra worker kill <name>               # Kill worker + clean up worktrees
+orchestra worker attach <name>             # Attach to worker's tmux session
 ```
 
 ### Task Management
@@ -90,54 +91,43 @@ orchestra agent attach <name>              # Attach to agent's tmux session
 orchestra task create --title "..." --desc "..."   # Create a new task
 orchestra task list                                 # List all tasks
 orchestra task status <task-id>                     # Show task details
-orchestra task assign <task-id> <agent-name>        # Assign task to an idle agent
+orchestra task assign <task-id> <worker-name>       # Assign task to an idle worker
 ```
 
 ### All-in-One
 
 ```bash
-orchestra run --title "..." --desc "..." [--repo <r>] [--agent <name>]
+orchestra run --title "..." --desc "..." [--worker <name>]
 ```
 
-Creates a task, spawns an agent, and assigns in one command.
+Creates a task, spawns a worker, and assigns in one command.
 
 ## How It Works
-
-### With a Project (recommended)
 
 ```
 orchestra project create my-ecommerce
 orchestra repo add /path/to/backend --name backend
 orchestra repo add /path/to/frontend --name frontend
-orchestra lead start
+orchestra planner start
 ```
 
-The lead spawns in the first repo's directory with a system prompt listing all repos and available commands. You discuss the goal, and the lead runs:
+The planner spawns in the first repo's directory with a system prompt listing all repos and available commands. You discuss the goal, and the planner runs:
 
 ```
 orchestra task create --title "Add user model" --desc "..."
-orchestra agent spawn db-worker --repo backend
-orchestra task assign abc123 db-worker
+orchestra worker spawn add-user-model
+orchestra task assign abc123 add-user-model
 ```
 
-Workers spawned with `--repo` on a git repo get **git worktrees** — isolated branches of the same codebase:
+Workers get **git worktrees** for every repo in the project — isolated branches of each codebase:
 
 ```
-db-worker  → ~/.orchestra/workspaces/my-ecommerce/db-worker/  (branch: orch/db-worker)
-api-worker → ~/.orchestra/workspaces/my-ecommerce/api-worker/ (branch: orch/api-worker)
-ui-worker  → ~/.orchestra/workspaces/my-ecommerce/ui-worker/  (branch: orch/ui-worker)
+add-user-model/
+  ├── backend/   (worktree, branch: orch/add-user-model)
+  └── frontend/  (worktree, branch: orch/add-user-model)
 ```
 
-### Without a Project (standalone agents)
-
-```
-orchestra agent spawn toast
-orchestra task create --title "Build a hello world" --desc "..."
-orchestra task assign <id> toast
-orchestra agent attach toast
-```
-
-Agents get isolated workspaces at `~/.orchestra/workspaces/<name>/`.
+When a worker finishes, it commits, pushes, and creates a PR targeting `develop` via `gh pr create`.
 
 ## Project Structure
 
@@ -146,15 +136,15 @@ clone-v1/
 ├── cmd/
 │   └── main.go                # CLI entry point — subcommand router
 ├── internal/
-│   ├── agent/
-│   │   ├── types.go           # Agent struct (status, role, project, repo, worktree)
-│   │   └── manager.go         # Spawn (with worktrees), kill, list, assign, attach
+│   ├── worker/
+│   │   ├── types.go           # Worker struct (status, project, worktrees)
+│   │   └── manager.go         # Spawn (with multi-repo worktrees), kill, list, assign
 │   ├── project/
 │   │   ├── types.go           # Project and Repo structs
 │   │   └── store.go           # Project CRUD, repo add/remove, active project
-│   ├── lead/
-│   │   ├── lead.go            # Lead start/stop/attach lifecycle
-│   │   └── prompt.go          # System prompt template for the lead
+│   ├── planner/
+│   │   ├── planner.go         # Planner start/stop/attach lifecycle
+│   │   └── prompt.go          # System prompt template for the planner
 │   ├── git/
 │   │   └── git.go             # Git worktree add/remove, IsGitRepo
 │   ├── task/
@@ -187,7 +177,7 @@ make clean       Remove build artifacts
 make reset       Wipe state files (does not kill tmux sessions)
 make kill-all    Kill all orch-* tmux sessions
 make nuke        Kill sessions + wipe ~/.orchestra entirely
-make agents      Shortcut for agent list
+make workers     Shortcut for worker list
 make tasks       Shortcut for task list
 ```
 
@@ -198,15 +188,18 @@ All runtime data lives in `~/.orchestra/`:
 ```
 ~/.orchestra/
 ├── state/
-│   ├── agents.json            # Agent registry
+│   ├── workers.json           # Worker registry
 │   ├── tasks.json             # Task list
 │   ├── projects.json          # Project registry
 │   └── active_project.json    # Currently active project pointer
 └── workspaces/
-    ├── standalone-agent/      # Standalone agent (no project)
-    └── my-ecommerce/          # Project-scoped worktrees
-        ├── db-worker/         # Git worktree (branch: orch/db-worker)
-        └── api-worker/        # Git worktree (branch: orch/api-worker)
+    └── my-ecommerce/          # Project-scoped workspaces
+        ├── add-user-model/    # Worker workspace
+        │   ├── backend/       # Git worktree (branch: orch/add-user-model)
+        │   └── frontend/      # Git worktree (branch: orch/add-user-model)
+        └── fix-api/
+            ├── backend/
+            └── frontend/
 ```
 
 Override location with `ORCHESTRA_HOME=/custom/path` env var.
@@ -217,35 +210,36 @@ Override location with `ORCHESTRA_HOME=/custom/path` env var.
 # Set up project
 orchestra project create my-api
 orchestra repo add ~/code/my-api-backend --name backend
+orchestra repo add ~/code/my-api-frontend --name frontend
 
-# Start the lead and plan together
-orchestra lead start
+# Start the planner and plan together
+orchestra planner start
 
-# (Inside the lead session, you discuss and it creates tasks + spawns workers)
+# (Inside the planner session, you discuss and it creates tasks + spawns workers)
 # Detach with Ctrl+B D
 
 # Check progress from outside
-orchestra agent list
+orchestra worker list
 orchestra task list
 
 # Attach to a worker to see its progress
-orchestra agent attach api-worker
+orchestra worker attach add-user-model
 
-# Re-attach to the lead
-orchestra lead attach
+# Re-attach to the planner
+orchestra planner attach
 
 # When done, clean up
-orchestra lead stop
+orchestra planner stop
 make kill-all
 ```
 
 ## Limitations
 
 - No task dependencies — tasks are independent
-- No memory — agents don't share context between sessions
-- No inter-agent communication — agents can't talk to each other
+- No memory — workers don't share context between sessions
+- No inter-agent communication — workers can't talk to each other
 - No completion detection — you check status manually
-- Lead doesn't auto-monitor — you plan interactively, it doesn't poll
+- Planner doesn't auto-monitor — you plan interactively, it doesn't poll
 
 These are addressed in v2 (automated orchestrator), v3 (memory), and v4 (communication).
 
