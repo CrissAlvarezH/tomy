@@ -12,6 +12,7 @@ import (
 	"github.com/orchestra/v1/internal/planner"
 	"github.com/orchestra/v1/internal/project"
 	"github.com/orchestra/v1/internal/task"
+	"github.com/orchestra/v1/internal/tmux"
 	"github.com/orchestra/v1/internal/worker"
 )
 
@@ -52,9 +53,14 @@ func main() {
 			cmdWorkerKill(os.Args[3:], workers)
 		case "attach":
 			cmdWorkerAttach(os.Args[3:], workers)
+		case "peek":
+			cmdWorkerPeek(os.Args[3:], workers)
 		default:
 			fatal("unknown worker subcommand: " + os.Args[2])
 		}
+
+	case "nudge":
+		cmdNudge(os.Args[2:], workers)
 
 	case "task":
 		if len(os.Args) < 3 {
@@ -153,8 +159,11 @@ Usage:
 
   orchestra worker spawn <name>                      Spawn a worker (worktrees for all project repos)
   orchestra worker list                              List all workers
+  orchestra worker peek <name>                       See what a worker is doing right now
   orchestra worker kill <name>                       Kill a worker
   orchestra worker attach <name>                     Attach to worker's session
+
+  orchestra nudge <name> <message>                   Send a message into a session
 
   orchestra task create --title "..." --desc "..."   Create a task
   orchestra task list                                List all tasks
@@ -424,6 +433,45 @@ func cmdWorkerAttach(args []string, mgr *worker.Manager) {
 	}
 }
 
+func cmdWorkerPeek(args []string, mgr *worker.Manager) {
+	if len(args) < 1 {
+		fatal("usage: orchestra worker peek <name>")
+	}
+	name := args[0]
+
+	w, err := mgr.Get(name)
+	if err != nil {
+		fatal(err.Error())
+	}
+	if !tmux.HasSession(w.Session) {
+		fatal(fmt.Sprintf("worker %q session is not running", name))
+	}
+
+	output, err := tmux.CapturePane(w.Session, 100)
+	if err != nil {
+		fatal(fmt.Sprintf("capture pane: %v", err))
+	}
+	fmt.Println(output)
+}
+
+func cmdNudge(args []string, mgr *worker.Manager) {
+	if len(args) < 2 {
+		fatal("usage: orchestra nudge <name> <message>")
+	}
+	name := args[0]
+	message := strings.Join(args[1:], " ")
+
+	session := mgr.SessionName(name)
+	if !tmux.HasSession(session) {
+		fatal(fmt.Sprintf("session %q is not running", name))
+	}
+
+	if err := tmux.SendKeys(session, message); err != nil {
+		fatal(fmt.Sprintf("nudge failed: %v", err))
+	}
+	fmt.Printf("Nudged %s.\n", name)
+}
+
 // --- Task commands ---
 
 func cmdTaskCreate(args []string, store *task.Store) {
@@ -627,6 +675,8 @@ func buildPrompt(t *task.Task, workerName string) string {
 	b.WriteString("2. Push your branches: git push -u origin HEAD (in each repo)\n")
 	b.WriteString("3. Create a PR targeting develop: gh pr create --base develop --fill\n")
 	b.WriteString("4. Mark yourself as done: orchestra done " + workerName + "\n")
+	b.WriteString("\nIf you need help or want to report progress, message the planner:\n")
+	b.WriteString("  orchestra nudge planner \"your message here\"\n")
 	return b.String()
 }
 

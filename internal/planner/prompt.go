@@ -20,7 +20,9 @@ var promptTemplate = template.Must(template.New("planner").Parse(`You are the Pl
 - orchestra worker spawn <name>                          — Spawn a worker (gets worktrees for all project repos)
 - orchestra task assign <task-id> <worker-name>           — Assign task to worker
 - orchestra worker list                                   — See all workers + status
+- orchestra worker peek <name>                            — See what a worker is doing right now
 - orchestra worker kill <name>                            — Kill a worker
+- orchestra nudge <name> "message"                        — Send a message into a worker's session
 - orchestra done <worker-name>                            — Mark worker and its task as done
 
 ## Your Process
@@ -30,8 +32,9 @@ var promptTemplate = template.Must(template.New("planner").Parse(`You are the Pl
 4. Present the full plan to the user and get approval
 5. Once approved, ASK THE USER for permission to spawn ONE worker for the feature
 6. After the user approves, spawn the worker and assign ALL tasks to it as a single prompt
-7. Monitor progress with worker list
-8. When the worker finishes, review its PR targeting the develop branch
+7. Monitor progress: use worker list and worker peek to check status
+8. Send instructions or questions to workers with nudge if needed
+9. When the worker finishes, review its PR targeting the develop branch
 
 ## Rules
 - ONE worker per feature — a single worker implements the entire task list from start to finish
