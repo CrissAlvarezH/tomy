@@ -81,8 +81,10 @@ orchestra planner stop                     # Kill the planner
 ```bash
 orchestra worker spawn <name>              # Spawn worker (worktrees for all project repos)
 orchestra worker list                      # Show all workers with status
+orchestra worker peek <name>               # See what a worker is doing right now
 orchestra worker kill <name>               # Kill worker + clean up worktrees
 orchestra worker attach <name>             # Attach to worker's tmux session
+orchestra done <worker-name>               # Mark worker and its task as done
 ```
 
 ### Task Management
@@ -92,6 +94,12 @@ orchestra task create --title "..." --desc "..."   # Create a new task
 orchestra task list                                 # List all tasks
 orchestra task status <task-id>                     # Show task details
 orchestra task assign <task-id> <worker-name>       # Assign task to an idle worker
+```
+
+### Communication
+
+```bash
+orchestra nudge <name> <message>           # Send a message into a session (planner or worker)
 ```
 
 ### All-in-One
@@ -111,7 +119,7 @@ orchestra repo add /path/to/frontend --name frontend
 orchestra planner start
 ```
 
-The planner spawns in the first repo's directory with a system prompt listing all repos and available commands. You discuss the goal, and the planner runs:
+The planner spawns in its own directory (`~/.orchestra/planner/<project>/`) with a `CLAUDE.md` containing its instructions. It accesses all repos via `--add-dir`. You discuss the goal, and the planner runs:
 
 ```
 orchestra task create --title "Add user model" --desc "..."
@@ -127,7 +135,7 @@ add-user-model/
   └── frontend/  (worktree, branch: orch/add-user-model)
 ```
 
-When a worker finishes, it commits, pushes, and creates a PR targeting `develop` via `gh pr create`.
+When a worker finishes, it commits, pushes, creates a PR targeting `develop` via `gh pr create`, and marks itself done with `orchestra done <name>`.
 
 ## Project Structure
 
@@ -192,6 +200,9 @@ All runtime data lives in `~/.orchestra/`:
 │   ├── tasks.json             # Task list
 │   ├── projects.json          # Project registry
 │   └── active_project.json    # Currently active project pointer
+├── planner/
+│   └── my-ecommerce/          # Planner home for this project
+│       └── CLAUDE.md          # Planner instructions (survives /clear)
 └── workspaces/
     └── my-ecommerce/          # Project-scoped workspaces
         ├── add-user-model/    # Worker workspace
@@ -222,6 +233,12 @@ orchestra planner start
 orchestra worker list
 orchestra task list
 
+# See what a worker is doing
+orchestra worker peek add-user-model
+
+# Send a message to a worker
+orchestra nudge add-user-model "prioritize the API endpoints first"
+
 # Attach to a worker to see its progress
 orchestra worker attach add-user-model
 
@@ -237,8 +254,6 @@ make kill-all
 
 - No task dependencies — tasks are independent
 - No memory — workers don't share context between sessions
-- No inter-agent communication — workers can't talk to each other
-- No completion detection — you check status manually
 - Planner doesn't auto-monitor — you plan interactively, it doesn't poll
 
 These are addressed in v2 (automated orchestrator), v3 (memory), and v4 (communication).
