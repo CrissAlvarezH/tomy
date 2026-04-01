@@ -163,7 +163,7 @@ Usage:
   orchestra worker kill <name>                       Kill a worker
   orchestra worker attach <name>                     Attach to worker's session
 
-  orchestra nudge <name> <message>                   Send a message into a session
+  orchestra nudge <to> <message> --from <name>        Send a message into a session
 
   orchestra task create --title "..." --desc "..."   Create a task
   orchestra task list                                List all tasks
@@ -455,21 +455,26 @@ func cmdWorkerPeek(args []string, mgr *worker.Manager) {
 }
 
 func cmdNudge(args []string, mgr *worker.Manager) {
-	if len(args) < 2 {
-		fatal("usage: orchestra nudge <name> <message>")
+	fs := flag.NewFlagSet("nudge", flag.ExitOnError)
+	from := fs.String("from", "unknown", "Sender name")
+	fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fatal("usage: orchestra nudge <to> <message> [--from <name>]")
 	}
-	name := args[0]
-	message := strings.Join(args[1:], " ")
+	name := fs.Arg(0)
+	message := strings.Join(fs.Args()[1:], " ")
 
 	session := mgr.SessionName(name)
 	if !tmux.HasSession(session) {
 		fatal(fmt.Sprintf("session %q is not running", name))
 	}
 
-	if err := tmux.SendKeys(session, message); err != nil {
+	formatted := fmt.Sprintf("[MESSAGE FROM %s]: %s", *from, message)
+	if err := tmux.SendKeys(session, formatted); err != nil {
 		fatal(fmt.Sprintf("nudge failed: %v", err))
 	}
-	fmt.Printf("Nudged %s.\n", name)
+	fmt.Printf("Nudged %s (from %s).\n", name, *from)
 }
 
 // --- Task commands ---
@@ -676,7 +681,7 @@ func buildPrompt(t *task.Task, workerName string) string {
 	b.WriteString("3. Create a PR targeting develop: gh pr create --base develop --fill\n")
 	b.WriteString("4. Mark yourself as done: orchestra done " + workerName + "\n")
 	b.WriteString("\nIf you need help or want to report progress, message the planner:\n")
-	b.WriteString("  orchestra nudge planner \"your message here\"\n")
+	b.WriteString("  orchestra nudge planner \"your message here\" --from " + workerName + "\n")
 	return b.String()
 }
 
