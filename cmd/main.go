@@ -478,7 +478,21 @@ func cmdWorkerPeek(args []string, mgr *worker.Manager) {
 func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager) {
 	fs := flag.NewFlagSet("msg send", flag.ExitOnError)
 	from := fs.String("from", "unknown", "Sender name")
-	fs.Parse(args)
+	// Reorder args so flags come before positional args,
+	// because Go's flag package stops parsing at the first non-flag argument.
+	var flagArgs, posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+	fs.Parse(append(flagArgs, posArgs...))
 
 	if fs.NArg() < 2 {
 		fatal("usage: orchestra msg send <to> <message> --from <name>")
