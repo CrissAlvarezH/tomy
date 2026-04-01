@@ -18,6 +18,8 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
+const version = "1.2.0"
+
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
 	os.Exit(1)
@@ -27,6 +29,11 @@ func main() {
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
+	}
+
+	if os.Args[1] == "--version" || os.Args[1] == "version" {
+		fmt.Println("orchestra v" + version)
+		return
 	}
 
 	cfg, err := config.Load()
