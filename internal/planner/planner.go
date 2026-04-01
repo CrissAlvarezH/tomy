@@ -33,6 +33,33 @@ func Start(mgr *worker.Manager, proj *project.Project, plannerBaseDir string) er
 		return fmt.Errorf("write CLAUDE.md: %w", err)
 	}
 
+	// Write .claude/settings.json with UserPromptSubmit hook
+	// so queued messages are injected at each turn boundary
+	claudeDir := filepath.Join(workDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return fmt.Errorf("create .claude dir: %w", err)
+	}
+	hookSettings := fmt.Sprintf(`{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "orchestra msg inbox %s --inject"
+          }
+        ]
+      }
+    ]
+  }
+}
+`, PlannerName)
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(hookSettings), 0644); err != nil {
+		return fmt.Errorf("write hook settings: %w", err)
+	}
+
 	// Spawn the planner as a worker entry (for session tracking)
 	session := mgr.SessionName(PlannerName)
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/v1/internal/config"
 	"github.com/orchestra/v1/internal/msg"
+	"github.com/orchestra/v1/internal/nudge"
 	"github.com/orchestra/v1/internal/planner"
 	"github.com/orchestra/v1/internal/project"
 	"github.com/orchestra/v1/internal/task"
@@ -45,6 +46,7 @@ func main() {
 	tasks := task.NewStore(cfg.StateDir)
 	projects := project.NewStore(cfg.StateDir)
 	messages := msg.NewStore(cfg.InboxDir)
+	nudges := nudge.NewQueue(cfg.NudgeQueueDir)
 
 	// Load active project (nil if none set)
 	activeProj, _ := projects.GetActive()
@@ -75,9 +77,9 @@ func main() {
 		}
 		switch os.Args[2] {
 		case "send":
-			cmdMsgSend(os.Args[3:], messages, workers)
+			cmdMsgSend(os.Args[3:], messages, workers, nudges)
 		case "inbox":
-			cmdMsgInbox(os.Args[3:], messages)
+			cmdMsgInbox(os.Args[3:], messages, nudges)
 		default:
 			fatal("unknown msg subcommand: " + os.Args[2])
 		}
@@ -183,8 +185,9 @@ Usage:
   orchestra worker kill <name>                       Kill a worker
   orchestra worker attach <name>                     Attach to worker's session
 
-  orchestra msg send <to> <message> --from <name>     Send a message (writes to inbox + nudges)
+  orchestra msg send <to> <message> --from <name>     Send a message (idle: direct, busy: queued)
   orchestra msg inbox <name>                         Read unread messages
+  orchestra msg inbox <name> --inject                Drain nudge queue as system-reminder (for hooks)
 
   orchestra task create --title "..." --desc "..."   Create a task
   orchestra task list                                List all tasks
@@ -475,7 +478,7 @@ func cmdWorkerPeek(args []string, mgr *worker.Manager) {
 	fmt.Println(output)
 }
 
-func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager) {
+func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager, nq *nudge.Queue) {
 	fs := flag.NewFlagSet("msg send", flag.ExitOnError)
 	from := fs.String("from", "unknown", "Sender name")
 	// Reorder args so flags come before positional args,
@@ -507,20 +510,66 @@ func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager) {
 	}
 	fmt.Printf("Message %s sent to %s.\n", m.ID, to)
 
-	// Nudge the recipient's tmux session as notification
+	// Notify the recipient
 	session := mgr.SessionName(to)
-	if tmux.HasSession(session) {
+	if !tmux.HasSession(session) {
+		return
+	}
+
+	// If the session is idle, deliver directly via send-keys
+	if tmux.IsIdle(session, 3*time.Second) {
 		notification := fmt.Sprintf("You have a new message from %s. Run: orchestra msg inbox %s", *from, to)
 		tmux.SendKeys(session, notification)
+		fmt.Printf("Delivered directly (session was idle).\n")
+		return
 	}
+
+	// Session is busy — queue the nudge for pickup at next turn boundary
+	if err := nq.Enqueue(*from, to, content); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not queue nudge: %v\n", err)
+		return
+	}
+	fmt.Printf("Session busy — nudge queued (will be delivered at next turn).\n")
 }
 
-func cmdMsgInbox(args []string, store *msg.Store) {
-	if len(args) < 1 {
-		fatal("usage: orchestra msg inbox <name>")
+func cmdMsgInbox(args []string, store *msg.Store, nq *nudge.Queue) {
+	fs := flag.NewFlagSet("msg inbox", flag.ExitOnError)
+	inject := fs.Bool("inject", false, "Drain nudge queue and output as system-reminder (for hooks)")
+	// Reorder args so flags come before positional args
+	var flagArgs, posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
 	}
-	name := args[0]
+	fs.Parse(append(flagArgs, posArgs...))
 
+	if fs.NArg() < 1 {
+		fatal("usage: orchestra msg inbox <name> [--inject]")
+	}
+	name := fs.Arg(0)
+
+	if *inject {
+		// Hook mode: drain queued nudges and print as system-reminder
+		nudges, err := nq.Drain(name)
+		if err != nil {
+			// Silently fail in hook mode — don't break the prompt
+			return
+		}
+		output := nudge.FormatForInjection(nudges)
+		if output != "" {
+			fmt.Print(output)
+		}
+		return
+	}
+
+	// Normal interactive mode
 	unread, err := store.Unread(name)
 	if err != nil {
 		fatal(err.Error())

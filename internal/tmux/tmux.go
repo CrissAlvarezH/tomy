@@ -134,6 +134,52 @@ func AcceptStartupDialogs(name string) error {
 	return nil // timeout — proceed anyway
 }
 
+// IsIdle checks if a tmux session is idle (showing a prompt, not mid-generation).
+// It polls twice 200ms apart to filter transient inter-tool-call gaps.
+func IsIdle(name string, timeout time.Duration) bool {
+	if err := validateName(name); err != nil {
+		return false
+	}
+
+	deadline := time.Now().Add(timeout)
+	idleCount := 0
+
+	for time.Now().Before(deadline) {
+		content, err := CapturePane(name, 20)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		if isPromptVisible(content) && !isBusy(content) {
+			idleCount++
+			if idleCount >= 2 {
+				return true
+			}
+		} else {
+			idleCount = 0
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
+}
+
+// isPromptVisible checks if the pane shows a Claude Code input prompt.
+func isPromptVisible(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == ">" || strings.HasSuffix(trimmed, "❯") {
+			return true
+		}
+	}
+	return false
+}
+
+// isBusy checks if Claude Code is actively generating (shows "esc to interrupt").
+func isBusy(content string) bool {
+	return strings.Contains(content, "esc to interrupt")
+}
+
 // AttachSession switches to an existing session. If already inside tmux,
 // uses switch-client; otherwise uses attach-session.
 func AttachSession(name string) error {

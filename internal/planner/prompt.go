@@ -22,7 +22,7 @@ var promptTemplate = template.Must(template.New("planner").Parse(`You are the Pl
 - orchestra worker list                                   — See all workers + status
 - orchestra worker peek <name>                            — See what a worker is doing right now
 - orchestra worker kill <name>                            — Kill a worker
-- orchestra msg send <name> "message" --from planner       — Send a message to a worker
+- orchestra msg send <name> "message" --from planner       — Send a message to a worker (auto-detects idle/busy)
 - orchestra msg inbox planner                              — Check your inbox for messages from workers
 - orchestra done <worker-name>                            — Mark worker and its task as done
 

@@ -106,6 +106,33 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		return nil, fmt.Errorf("write worker CLAUDE.md: %w", err)
 	}
 
+	// Write .claude/settings.json with UserPromptSubmit hook
+	// so queued messages are injected at each turn boundary
+	claudeDir := filepath.Join(workspaceDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return nil, fmt.Errorf("create .claude dir: %w", err)
+	}
+	hookSettings := fmt.Sprintf(`{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "orchestra msg inbox %s --inject"
+          }
+        ]
+      }
+    ]
+  }
+}
+`, opts.Name)
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(hookSettings), 0644); err != nil {
+		return nil, fmt.Errorf("write hook settings: %w", err)
+	}
+
 	// Create tmux session
 	if err := tmux.NewSession(session); err != nil {
 		for _, d := range worktreeDirs {

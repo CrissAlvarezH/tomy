@@ -15,6 +15,7 @@ type Config struct {
 	PlannerDir    string // ~/.orchestra/planner
 	InboxDir      string // ~/.orchestra/state/inbox
 	PlansDir      string // ~/.orchestra/state/plans
+	NudgeQueueDir string // ~/.orchestra/state/nudge_queue
 	SessionPrefix string // tmux session name prefix
 }
 
@@ -36,11 +37,12 @@ func Load() (*Config, error) {
 		PlannerDir:    filepath.Join(home, "planner"),
 		InboxDir:      filepath.Join(stateDir, "inbox"),
 		PlansDir:      filepath.Join(stateDir, "plans"),
+		NudgeQueueDir: filepath.Join(stateDir, "nudge_queue"),
 		SessionPrefix: "orch",
 	}
 
 	// Ensure directories exist
-	for _, dir := range []string{cfg.StateDir, cfg.WorkspacesDir, cfg.PlannerDir, cfg.InboxDir, cfg.PlansDir} {
+	for _, dir := range []string{cfg.StateDir, cfg.WorkspacesDir, cfg.PlannerDir, cfg.InboxDir, cfg.PlansDir, cfg.NudgeQueueDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, err
 		}
