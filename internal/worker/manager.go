@@ -96,6 +96,26 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		}
 	}
 
+	// Run setup commands for repos that have them
+	workerIndex := 0
+	for _, w := range workers {
+		if w.ProjectID == opts.Project.ID {
+			workerIndex++
+		}
+	}
+	wtIdx := 0
+	for _, repo := range opts.Project.Repos {
+		if !repo.IsGitRepo {
+			continue
+		}
+		if repo.SetupCommand != "" {
+			if err := RunSetupCommand(repo, worktreeDirs[wtIdx], workspaceDir, opts.Name, workerIndex); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: setup for %s failed: %v\n", repo.Name, err)
+			}
+		}
+		wtIdx++
+	}
+
 	// Worker home is the workspace root (CLAUDE.md lives here)
 	workDir := workspaceDir
 

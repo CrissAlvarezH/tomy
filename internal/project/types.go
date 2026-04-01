@@ -18,9 +18,10 @@ type Project struct {
 }
 
 type Repo struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	IsGitRepo bool   `json:"is_git_repo"`
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	IsGitRepo    bool   `json:"is_git_repo"`
+	SetupCommand string `json:"setup_command"`
 }
 
 type ActiveProject struct {

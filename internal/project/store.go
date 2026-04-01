@@ -118,7 +118,7 @@ func (s *Store) GetActive() (*Project, error) {
 }
 
 // AddRepo adds a repo to a project.
-func (s *Store) AddRepo(projectID string, name string, path string) (*Repo, error) {
+func (s *Store) AddRepo(projectID string, name string, path string, setupCmd string) (*Repo, error) {
 	// Resolve to absolute path
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -152,9 +152,10 @@ func (s *Store) AddRepo(projectID string, name string, path string) (*Repo, erro
 		}
 
 		repo := Repo{
-			Name:      name,
-			Path:      absPath,
-			IsGitRepo: git.IsGitRepo(absPath),
+			Name:         name,
+			Path:         absPath,
+			IsGitRepo:    git.IsGitRepo(absPath),
+			SetupCommand: setupCmd,
 		}
 		projects[i].Repos = append(projects[i].Repos, repo)
 
@@ -193,6 +194,29 @@ func (s *Store) RemoveRepo(projectID string, repoName string) error {
 		}
 		projects[i].Repos = remaining
 		return s.saveAll(projects)
+	}
+
+	return fmt.Errorf("project %q not found", projectID)
+}
+
+// SetRepoSetup updates the setup command for a repo.
+func (s *Store) SetRepoSetup(projectID string, repoName string, setupCmd string) error {
+	projects, err := s.loadAll()
+	if err != nil {
+		return err
+	}
+
+	for i := range projects {
+		if projects[i].ID != projectID {
+			continue
+		}
+		for j := range projects[i].Repos {
+			if projects[i].Repos[j].Name == repoName {
+				projects[i].Repos[j].SetupCommand = setupCmd
+				return s.saveAll(projects)
+			}
+		}
+		return fmt.Errorf("repo %q not found in project %q", repoName, projects[i].Name)
 	}
 
 	return fmt.Errorf("project %q not found", projectID)

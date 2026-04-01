@@ -19,7 +19,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.4.0"
+const version = "1.5.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -120,7 +120,7 @@ func main() {
 
 	case "repo":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra repo <add|list|remove>")
+			fatal("usage: orchestra repo <add|list|remove|setup>")
 		}
 		switch os.Args[2] {
 		case "add":
@@ -129,6 +129,8 @@ func main() {
 			cmdRepoList(activeProj)
 		case "remove":
 			cmdRepoRemove(os.Args[3:], projects, activeProj)
+		case "setup":
+			cmdRepoSetup(os.Args[3:], projects, activeProj)
 		default:
 			fatal("unknown repo subcommand: " + os.Args[2])
 		}
@@ -166,37 +168,56 @@ func printUsage() {
 	fmt.Println(`orchestra - multi-agent Claude Code orchestrator (v1)
 
 Usage:
-  orchestra project create <name>                    Create a new project
-  orchestra project list                             List all projects
-  orchestra project set <name>                       Set active project
-  orchestra project status                           Show active project details
+  orchestra project create <name>                        Create a new project
+  orchestra project list                                 List all projects
+  orchestra project set <name>                           Set active project
+  orchestra project status                               Show active project details
 
-  orchestra repo add <path> [--name <name>]          Add a repo to active project
-  orchestra repo list                                List repos in active project
-  orchestra repo remove <name>                       Remove a repo
+  orchestra repo add <path> [--name <n>] [--setup <cmd>] Add a repo to active project
+  orchestra repo list                                    List repos in active project
+  orchestra repo remove <name>                           Remove a repo
+  orchestra repo setup <name> --cmd <command>             Set/update post-worktree setup command
+  orchestra repo setup <name>                            Show current setup command
 
-  orchestra planner start                            Select project + spawn planner (interactive)
-  orchestra planner stop                             Kill the planner session
-  orchestra planner attach                           Attach to planner's session
+  orchestra planner start                                Select project + spawn planner (interactive)
+  orchestra planner stop                                 Kill the planner session
+  orchestra planner attach                               Attach to planner's session
 
-  orchestra worker spawn <name>                      Spawn a worker (worktrees for all project repos)
-  orchestra worker list                              List all workers
-  orchestra worker peek <name>                       See what a worker is doing right now
-  orchestra worker kill <name>                       Kill a worker
-  orchestra worker attach <name>                     Attach to worker's session
+  orchestra worker spawn <name>                          Spawn a worker (worktrees + run setup commands)
+  orchestra worker list                                  List all workers
+  orchestra worker peek <name>                           See what a worker is doing right now
+  orchestra worker kill <name>                           Kill a worker
+  orchestra worker attach <name>                         Attach to worker's session
 
-  orchestra msg send <to> <message> --from <name>     Send a message (idle: direct, busy: queued)
-  orchestra msg inbox <name>                         Read unread messages
-  orchestra msg inbox <name> --inject                Drain nudge queue as system-reminder (for hooks)
+  orchestra msg send <to> <message> --from <name>        Send a message (idle: direct, busy: queued)
+  orchestra msg inbox <name>                             Read unread messages
+  orchestra msg inbox <name> --inject                    Drain nudge queue as system-reminder (for hooks)
 
-  orchestra task create --title "..." --desc "..."   Create a task
-  orchestra task list                                List all tasks
-  orchestra task status <task-id>                    Show task details
-  orchestra task assign <task-id> <worker-name>      Assign task to worker
+  orchestra task create --title "..." --desc "..."       Create a task
+  orchestra task list                                    List all tasks
+  orchestra task status <task-id>                         Show task details
+  orchestra task assign <task-id> <worker-name>           Assign task to worker
 
-  orchestra done <worker-name>                       Mark worker and its task as done
+  orchestra done <worker-name>                           Mark worker and its task as done
 
-  orchestra run --title "..." --desc "..."           Create + spawn + assign (all-in-one)`)
+  orchestra run --title "..." --desc "..."               Create + spawn + assign (all-in-one)
+
+Worktree Setup:
+  Git worktrees don't include gitignored files (.env, configs). Attach a setup
+  command to a repo and it runs automatically in each new worktree after spawn.
+
+  orchestra repo add ./api --setup 'cp "$ORCH_REPO_PATH/.env" .'
+  orchestra repo setup api --cmd 'docker compose -p "api-$ORCH_WORKER_NAME" up -d'
+
+  Setup commands run via "sh -c" with a 60s timeout. Failures warn but don't
+  block worker creation. The following env vars are available:
+
+    ORCH_WORKTREE_PATH   Absolute path to the created worktree
+    ORCH_REPO_PATH       Absolute path to the original repo
+    ORCH_REPO_NAME       Name of the repo
+    ORCH_WORKER_NAME     Name of the worker
+    ORCH_WORKER_INDEX    0-based index (for port offsetting)
+    ORCH_WORKSPACE_DIR   Worker's workspace root directory`)
 }
 
 // --- Project commands ---
@@ -290,10 +311,11 @@ func cmdRepoAdd(args []string, store *project.Store, proj *project.Project) {
 
 	fs := flag.NewFlagSet("repo add", flag.ExitOnError)
 	name := fs.String("name", "", "Repo name (defaults to directory basename)")
+	setup := fs.String("setup", "", "Shell command to run after worktree creation")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fatal("usage: orchestra repo add <path> [--name <name>]")
+		fatal("usage: orchestra repo add <path> [--name <name>] [--setup <command>]")
 	}
 	path := fs.Arg(0)
 
@@ -302,7 +324,7 @@ func cmdRepoAdd(args []string, store *project.Store, proj *project.Project) {
 		repoName = filepath.Base(path)
 	}
 
-	r, err := store.AddRepo(proj.ID, repoName, path)
+	r, err := store.AddRepo(proj.ID, repoName, path, *setup)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -312,6 +334,9 @@ func cmdRepoAdd(args []string, store *project.Store, proj *project.Project) {
 		gitLabel = " (git detected)"
 	}
 	fmt.Printf("Added repo %q: %s%s\n", r.Name, r.Path, gitLabel)
+	if r.SetupCommand != "" {
+		fmt.Printf("  setup: %s\n", r.SetupCommand)
+	}
 }
 
 func cmdRepoList(proj *project.Project) {
@@ -323,15 +348,79 @@ func cmdRepoList(proj *project.Project) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPATH\tGIT")
+	fmt.Fprintln(w, "NAME\tPATH\tGIT\tSETUP")
 	for _, r := range proj.Repos {
 		gitLabel := "no"
 		if r.IsGitRepo {
 			gitLabel = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, r.Path, gitLabel)
+		setupLabel := "-"
+		if r.SetupCommand != "" {
+			setupLabel = r.SetupCommand
+			if len(setupLabel) > 50 {
+				setupLabel = setupLabel[:47] + "..."
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Name, r.Path, gitLabel, setupLabel)
 	}
 	w.Flush()
+}
+
+func cmdRepoSetup(args []string, store *project.Store, proj *project.Project) {
+	requireActiveProject(proj)
+
+	fs := flag.NewFlagSet("repo setup", flag.ExitOnError)
+	cmd := fs.String("cmd", "", "Shell command to run after worktree creation")
+	// Reorder args so flags come before positional args,
+	// because Go's flag package stops parsing at the first non-flag argument.
+	var flagArgs, posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+	fs.Parse(append(flagArgs, posArgs...))
+
+	if fs.NArg() < 1 {
+		fatal("usage: orchestra repo setup <repo-name> --cmd <command>")
+	}
+	repoName := fs.Arg(0)
+
+	// If --cmd not provided, show current setup
+	cmdSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "cmd" {
+			cmdSet = true
+		}
+	})
+
+	if !cmdSet {
+		r, err := store.GetRepo(proj, repoName)
+		if err != nil {
+			fatal(err.Error())
+		}
+		if r.SetupCommand == "" {
+			fmt.Printf("No setup command for repo %q\n", repoName)
+		} else {
+			fmt.Printf("Setup command for %q: %s\n", repoName, r.SetupCommand)
+		}
+		return
+	}
+
+	if err := store.SetRepoSetup(proj.ID, repoName, *cmd); err != nil {
+		fatal(err.Error())
+	}
+	if *cmd == "" {
+		fmt.Printf("Cleared setup command for repo %q\n", repoName)
+	} else {
+		fmt.Printf("Set setup command for %q: %s\n", repoName, *cmd)
+	}
 }
 
 func cmdRepoRemove(args []string, store *project.Store, proj *project.Project) {

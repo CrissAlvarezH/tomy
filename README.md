@@ -19,7 +19,7 @@ make build
 
 # Create a project and add your repos
 orchestra project create my-app
-orchestra repo add /path/to/backend --name backend
+orchestra repo add /path/to/backend --name backend --setup 'cp "$ORCH_REPO_PATH/.env" .'
 orchestra repo add /path/to/frontend --name frontend
 
 # Start the planner — you'll plan work interactively with it
@@ -44,7 +44,7 @@ Make sure `~/.local/bin` is in your PATH.
 | Concept | Description |
 |---------|-------------|
 | **Project** | A named group (e.g. "my-ecommerce"). Contains repos and tasks. |
-| **Repo** | A directory/git repo within a project. Workers get worktrees of each repo. |
+| **Repo** | A directory/git repo within a project. Workers get worktrees of each repo. Can have a setup command for post-worktree initialization. |
 | **Planner** | An interactive Claude session where you plan work. It spawns workers and assigns tasks. |
 | **Worker** | A Claude Code session in tmux with git worktrees for all project repos. Creates PRs to `develop` when done. |
 | **Task** | A unit of work with a title and description. Assigned to one worker. |
@@ -63,9 +63,11 @@ orchestra project status                   # Show active project details
 ### Repo Management
 
 ```bash
-orchestra repo add <path> [--name <name>]  # Add a repo to active project
-orchestra repo list                        # List repos in active project
-orchestra repo remove <name>               # Remove a repo
+orchestra repo add <path> [--name <name>] [--setup <cmd>]  # Add a repo (with optional setup command)
+orchestra repo list                                         # List repos in active project
+orchestra repo remove <name>                                # Remove a repo
+orchestra repo setup <name> --cmd <command>                  # Set/update post-worktree setup command
+orchestra repo setup <name>                                 # Show current setup command
 ```
 
 ### Planner (Interactive Orchestrator)
@@ -79,7 +81,7 @@ orchestra planner stop                     # Kill the planner
 ### Worker Management
 
 ```bash
-orchestra worker spawn <name>              # Spawn worker (worktrees for all project repos)
+orchestra worker spawn <name>              # Spawn worker (worktrees + run setup commands)
 orchestra worker list                      # Show all workers with status
 orchestra worker peek <name>               # See what a worker is doing right now
 orchestra worker kill <name>               # Kill worker + clean up worktrees
@@ -137,6 +139,33 @@ add-user-model/
 
 When a worker finishes, it commits, pushes, creates a PR targeting `develop` via `gh pr create`, and marks itself done with `orchestra done <name>`.
 
+## Worktree Setup Commands
+
+Git worktrees don't include gitignored files like `.env`. If your repos need environment files, port adjustments, or Docker services per worker, configure a **setup command** on the repo. It runs automatically in each new worktree after `worker spawn`.
+
+```bash
+# Copy .env and offset ports per worker
+orchestra repo add ./my-api --name api --setup \
+  'cp "$ORCH_REPO_PATH/.env" .env && sed "s/3000/$((3000 + ORCH_WORKER_INDEX * 10))/" .env > .env.tmp && mv .env.tmp .env'
+
+# Spin up an isolated Docker stack per worker
+orchestra repo setup api --cmd \
+  'cp "$ORCH_REPO_PATH/.env" . && docker compose -p "api-$ORCH_WORKER_NAME" up -d'
+```
+
+Setup commands run via `sh -c` with a 60-second timeout. Failures log a warning but don't block worker creation.
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ORCH_WORKTREE_PATH` | Absolute path to the created worktree |
+| `ORCH_REPO_PATH` | Absolute path to the original repo (for copying gitignored files) |
+| `ORCH_REPO_NAME` | Name of the repo |
+| `ORCH_WORKER_NAME` | Name of the worker |
+| `ORCH_WORKER_INDEX` | 0-based index of this worker within the project (for port offsetting) |
+| `ORCH_WORKSPACE_DIR` | Worker's workspace root directory |
+
 ## Project Structure
 
 ```
@@ -146,7 +175,8 @@ clone-v1/
 ├── internal/
 │   ├── worker/
 │   │   ├── types.go           # Worker struct (status, project, worktrees)
-│   │   └── manager.go         # Spawn (with multi-repo worktrees), kill, list, assign
+│   │   ├── manager.go         # Spawn (with multi-repo worktrees), kill, list, assign
+│   │   └── setup.go           # Post-worktree setup command runner
 │   ├── project/
 │   │   ├── types.go           # Project and Repo structs
 │   │   └── store.go           # Project CRUD, repo add/remove, active project
