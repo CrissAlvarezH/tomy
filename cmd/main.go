@@ -87,7 +87,7 @@ func main() {
 		case "status":
 			cmdTaskStatus(os.Args[3:], tasks)
 		case "assign":
-			cmdTaskAssign(os.Args[3:], tasks, workers)
+			cmdTaskAssign(os.Args[3:], tasks, workers, cfg.PlansDir)
 		default:
 			fatal("unknown task subcommand: " + os.Args[2])
 		}
@@ -143,7 +143,7 @@ func main() {
 		cmdDone(os.Args[2:], tasks, workers)
 
 	case "run":
-		cmdRun(os.Args[2:], tasks, workers, activeProj)
+		cmdRun(os.Args[2:], tasks, workers, activeProj, cfg.PlansDir)
 
 	case "help", "--help", "-h":
 		printUsage()
@@ -587,7 +587,7 @@ func cmdTaskStatus(args []string, store *task.Store) {
 	}
 }
 
-func cmdTaskAssign(args []string, store *task.Store, mgr *worker.Manager) {
+func cmdTaskAssign(args []string, store *task.Store, mgr *worker.Manager, plansDir string) {
 	if len(args) < 2 {
 		fatal("usage: orchestra task assign <task-id> <worker-name>")
 	}
@@ -611,7 +611,7 @@ func cmdTaskAssign(args []string, store *task.Store, mgr *worker.Manager) {
 	}
 
 	prompt := buildPrompt(t, workerName)
-	if err := mgr.Assign(workerName, prompt); err != nil {
+	if err := mgr.Assign(workerName, prompt, plansDir); err != nil {
 		fatal(err.Error())
 	}
 
@@ -629,7 +629,7 @@ func cmdTaskAssign(args []string, store *task.Store, mgr *worker.Manager) {
 
 // --- Run command (convenience) ---
 
-func cmdRun(args []string, store *task.Store, mgr *worker.Manager, proj *project.Project) {
+func cmdRun(args []string, store *task.Store, mgr *worker.Manager, proj *project.Project, plansDir string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	title := fs.String("title", "", "Task title (required)")
 	desc := fs.String("desc", "", "Task description / prompt")
@@ -663,7 +663,7 @@ func cmdRun(args []string, store *task.Store, mgr *worker.Manager, proj *project
 	fmt.Printf("Spawned worker %q (session: %s)\n", w.Name, w.Session)
 
 	prompt := buildPrompt(t, name)
-	if err := mgr.Assign(name, prompt); err != nil {
+	if err := mgr.Assign(name, prompt, plansDir); err != nil {
 		fatal(err.Error())
 	}
 
@@ -713,20 +713,14 @@ func cmdDone(args []string, store *task.Store, mgr *worker.Manager) {
 
 func buildPrompt(t *task.Task, workerName string) string {
 	var b strings.Builder
-	b.WriteString(t.Title)
+	b.WriteString("# Plan for " + workerName + "\n\n")
+	b.WriteString("## " + t.Title + "\n\n")
 	if t.Description != "" {
-		b.WriteString("\n\n")
 		b.WriteString(t.Description)
+		b.WriteString("\n")
 	}
-	b.WriteString("\n\n---\n")
-	b.WriteString("IMPORTANT: When you have completed this task:\n")
-	b.WriteString("1. Commit your changes in each repo you modified\n")
-	b.WriteString("2. Push your branches: git push -u origin HEAD (in each repo)\n")
-	b.WriteString("3. Create a PR targeting develop: gh pr create --base develop --fill\n")
-	b.WriteString("4. Mark yourself as done: orchestra done " + workerName + "\n")
-	b.WriteString("\nIf you need help or want to report progress, message the planner:\n")
-	b.WriteString("  orchestra msg send planner \"your message here\" --from " + workerName + "\n")
-	b.WriteString("Check your inbox for messages: orchestra msg inbox " + workerName + "\n")
+	b.WriteString("\n---\n")
+	b.WriteString("Follow your CLAUDE.md for completion and communication instructions.\n")
 	return b.String()
 }
 

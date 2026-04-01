@@ -96,10 +96,14 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		}
 	}
 
-	// Determine primary workdir (first worktree, or first repo, or workspace root)
+	// Worker home is the workspace root (CLAUDE.md lives here)
 	workDir := workspaceDir
-	if len(addDirs) > 0 {
-		workDir = addDirs[0]
+
+	// Write worker CLAUDE.md with operating instructions
+	workerCLAUDE := renderWorkerCLAUDE(opts.Name)
+	claudeMdPath := filepath.Join(workspaceDir, "CLAUDE.md")
+	if err := os.WriteFile(claudeMdPath, []byte(workerCLAUDE), 0644); err != nil {
+		return nil, fmt.Errorf("write worker CLAUDE.md: %w", err)
 	}
 
 	// Create tmux session
@@ -110,13 +114,13 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		return nil, fmt.Errorf("create tmux session: %w", err)
 	}
 
-	// cd into primary working directory
+	// cd into workspace root (where CLAUDE.md is)
 	if err := tmux.SendKeys(session, "cd "+workDir); err != nil {
 		tmux.KillSession(session)
 		return nil, fmt.Errorf("cd to workspace: %w", err)
 	}
 
-	// Build Claude command with --add-dir for each repo
+	// Build Claude command with --add-dir for each repo worktree
 	claudeCmd := "claude --dangerously-skip-permissions"
 	for _, dir := range addDirs {
 		claudeCmd += " --add-dir " + dir
@@ -242,8 +246,8 @@ func (m *Manager) Attach(name string) error {
 	return tmux.AttachSession(session)
 }
 
-// Assign sends a task prompt to a worker's Claude Code session.
-func (m *Manager) Assign(name string, prompt string) error {
+// Assign saves the plan to a file and delivers it to the worker's Claude session.
+func (m *Manager) Assign(name string, prompt string, plansDir string) error {
 	w, err := m.Get(name)
 	if err != nil {
 		return err
@@ -252,11 +256,55 @@ func (m *Manager) Assign(name string, prompt string) error {
 		return fmt.Errorf("worker %q session is not running", name)
 	}
 
-	promptFile := filepath.Join(w.WorkDir, ".task-prompt")
-	if err := os.WriteFile(promptFile, []byte(prompt), 0644); err != nil {
-		return fmt.Errorf("write prompt file: %w", err)
+	// Save plan persistently
+	os.MkdirAll(plansDir, 0755)
+	planFile := filepath.Join(plansDir, name+".md")
+	if err := os.WriteFile(planFile, []byte(prompt), 0644); err != nil {
+		return fmt.Errorf("write plan file: %w", err)
 	}
 
-	cmd := fmt.Sprintf("cat %s", promptFile)
+	// Deliver plan to worker session
+	cmd := fmt.Sprintf("cat %s", planFile)
 	return tmux.SendKeys(w.Session, cmd)
+}
+
+// renderWorkerCLAUDE generates the CLAUDE.md content for a worker.
+func renderWorkerCLAUDE(workerName string) string {
+	return fmt.Sprintf(`# Worker: %s
+
+You are a worker agent in the Orchestra system. Your job is to execute the plan you receive.
+
+## Operating Instructions
+
+1. Read the plan carefully — it contains all your tasks in order
+2. Work through each task sequentially
+3. Commit your changes in each repo you modify
+4. Push your branches: git push -u origin HEAD
+5. Create a PR targeting develop: gh pr create --base develop --fill
+
+## When Done
+
+Mark yourself as done:
+`+"```"+`
+orchestra done %s
+`+"```"+`
+
+## Communication
+
+Send messages to the planner:
+`+"```"+`
+orchestra msg send planner "your message" --from %s
+`+"```"+`
+
+Check your inbox for messages:
+`+"```"+`
+orchestra msg inbox %s
+`+"```"+`
+
+## Rules
+
+- Focus on the assigned plan only — do not take on extra work
+- If you are stuck or need clarification, message the planner
+- Do NOT push directly to main or develop — always use a PR
+`, workerName, workerName, workerName, workerName)
 }
