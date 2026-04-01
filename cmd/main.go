@@ -19,7 +19,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
