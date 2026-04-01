@@ -19,7 +19,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.5.0"
+const version = "1.6.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -135,6 +135,19 @@ func main() {
 			fatal("unknown repo subcommand: " + os.Args[2])
 		}
 
+	case "plan":
+		if len(os.Args) < 3 {
+			fatal("usage: orchestra plan <list|show>")
+		}
+		switch os.Args[2] {
+		case "list":
+			cmdPlanList(cfg.PlansDir)
+		case "show":
+			cmdPlanShow(os.Args[3:], cfg.PlansDir)
+		default:
+			fatal("unknown plan subcommand: " + os.Args[2])
+		}
+
 	case "planner":
 		if len(os.Args) < 3 {
 			fatal("usage: orchestra planner <start|stop|attach>")
@@ -178,6 +191,9 @@ Usage:
   orchestra repo remove <name>                           Remove a repo
   orchestra repo setup <name> --cmd <command>             Set/update post-worktree setup command
   orchestra repo setup <name>                            Show current setup command
+
+  orchestra plan list                                    List saved worker plans
+  orchestra plan show <worker-name>                      Show a worker's plan
 
   orchestra planner start                                Select project + spawn planner (interactive)
   orchestra planner stop                                 Kill the planner session
@@ -433,6 +449,57 @@ func cmdRepoRemove(args []string, store *project.Store, proj *project.Project) {
 		fatal(err.Error())
 	}
 	fmt.Printf("Removed repo %q\n", args[0])
+}
+
+// --- Plan commands ---
+
+func cmdPlanList(plansDir string) {
+	entries, err := os.ReadDir(plansDir)
+	if err != nil {
+		fmt.Println("No plans.")
+		return
+	}
+
+	var plans []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			plans = append(plans, e)
+		}
+	}
+
+	if len(plans) == 0 {
+		fmt.Println("No plans.")
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "WORKER\tFILE\tSIZE\tCREATED")
+	for _, e := range plans {
+		info, _ := e.Info()
+		name := strings.TrimSuffix(e.Name(), ".md")
+		size := "-"
+		created := "-"
+		if info != nil {
+			size = fmt.Sprintf("%d bytes", info.Size())
+			created = info.ModTime().Format("2006-01-02 15:04:05")
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, e.Name(), size, created)
+	}
+	w.Flush()
+}
+
+func cmdPlanShow(args []string, plansDir string) {
+	if len(args) < 1 {
+		fatal("usage: orchestra plan show <worker-name>")
+	}
+	name := args[0]
+
+	planFile := filepath.Join(plansDir, name+".md")
+	data, err := os.ReadFile(planFile)
+	if err != nil {
+		fatal(fmt.Sprintf("no plan found for %q", name))
+	}
+	fmt.Print(string(data))
 }
 
 // --- Planner commands ---
