@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/orchestra/v1/internal/tmux"
 	"github.com/orchestra/v1/internal/project"
+	"github.com/orchestra/v1/internal/tmux"
 	"github.com/orchestra/v1/internal/worker"
 )
 

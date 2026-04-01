@@ -19,7 +19,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -149,7 +149,7 @@ func main() {
 		}
 
 	case "done":
-		cmdDone(os.Args[2:], tasks, workers)
+		cmdDone(os.Args[2:], tasks, workers, messages, nudges)
 
 	case "run":
 		cmdRun(os.Args[2:], tasks, workers, activeProj, cfg.PlansDir)
@@ -752,7 +752,7 @@ func cmdRun(args []string, store *task.Store, mgr *worker.Manager, proj *project
 
 // --- Done command ---
 
-func cmdDone(args []string, store *task.Store, mgr *worker.Manager) {
+func cmdDone(args []string, store *task.Store, mgr *worker.Manager, inbox *msg.Store, nq *nudge.Queue) {
 	if len(args) < 1 {
 		fatal("usage: orchestra done <worker-name>")
 	}
@@ -764,19 +764,50 @@ func cmdDone(args []string, store *task.Store, mgr *worker.Manager) {
 	}
 
 	// Mark the worker's task as done
+	var taskTitle string
 	if w.TaskID != "" {
 		store.Update(w.TaskID, func(t *task.Task) {
 			t.Status = task.StatusDone
+			taskTitle = t.Title
 		})
 		fmt.Printf("Task %s marked as done.\n", w.TaskID)
 	}
 
-	// Mark the worker as idle
+	// Mark the worker as done
 	mgr.Update(workerName, func(w *worker.Worker) {
 		w.Status = worker.StatusDone
 		w.TaskID = ""
 	})
 	fmt.Printf("Worker %s marked as done.\n", workerName)
+
+	// Notify the planner
+	notification := fmt.Sprintf("Worker %s has finished.", workerName)
+	if taskTitle != "" {
+		notification = fmt.Sprintf("Worker %s has finished task: %s", workerName, taskTitle)
+	}
+	m, err := inbox.Send(workerName, "planner", notification)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not notify planner: %v\n", err)
+		return
+	}
+	fmt.Printf("Planner notified (msg %s).\n", m.ID)
+
+	// Deliver directly if planner session is idle, otherwise queue nudge
+	session := mgr.SessionName("planner")
+	if !tmux.HasSession(session) {
+		return
+	}
+	if tmux.IsIdle(session, 3*time.Second) {
+		hint := fmt.Sprintf("Worker %s is done. Run: orchestra msg inbox planner", workerName)
+		tmux.SendKeys(session, hint)
+		fmt.Printf("Delivered directly (planner was idle).\n")
+		return
+	}
+	if err := nq.Enqueue(workerName, "planner", notification); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not queue nudge: %v\n", err)
+		return
+	}
+	fmt.Printf("Planner busy — nudge queued.\n")
 }
 
 // --- Helpers ---
