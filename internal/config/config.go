@@ -13,6 +13,7 @@ type Config struct {
 	StateDir      string // ~/.orchestra/state
 	WorkspacesDir string // ~/.orchestra/workspaces
 	PlannerDir    string // ~/.orchestra/planner
+	InboxDir      string // ~/.orchestra/state/inbox
 	SessionPrefix string // tmux session name prefix
 }
 
@@ -26,16 +27,18 @@ func Load() (*Config, error) {
 		home = filepath.Join(userHome, ".orchestra")
 	}
 
+	stateDir := filepath.Join(home, "state")
 	cfg := &Config{
 		HomeDir:       home,
-		StateDir:      filepath.Join(home, "state"),
+		StateDir:      stateDir,
 		WorkspacesDir: filepath.Join(home, "workspaces"),
 		PlannerDir:    filepath.Join(home, "planner"),
+		InboxDir:      filepath.Join(stateDir, "inbox"),
 		SessionPrefix: "orch",
 	}
 
 	// Ensure directories exist
-	for _, dir := range []string{cfg.StateDir, cfg.WorkspacesDir, cfg.PlannerDir} {
+	for _, dir := range []string{cfg.StateDir, cfg.WorkspacesDir, cfg.PlannerDir, cfg.InboxDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, err
 		}

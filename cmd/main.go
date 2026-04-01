@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/orchestra/v1/internal/config"
+	"github.com/orchestra/v1/internal/msg"
 	"github.com/orchestra/v1/internal/planner"
 	"github.com/orchestra/v1/internal/project"
 	"github.com/orchestra/v1/internal/task"
@@ -35,6 +37,7 @@ func main() {
 	workers := worker.NewManager(cfg.StateDir, cfg.WorkspacesDir, cfg.SessionPrefix)
 	tasks := task.NewStore(cfg.StateDir)
 	projects := project.NewStore(cfg.StateDir)
+	messages := msg.NewStore(cfg.InboxDir)
 
 	// Load active project (nil if none set)
 	activeProj, _ := projects.GetActive()
@@ -59,8 +62,18 @@ func main() {
 			fatal("unknown worker subcommand: " + os.Args[2])
 		}
 
-	case "nudge":
-		cmdNudge(os.Args[2:], workers)
+	case "msg":
+		if len(os.Args) < 3 {
+			fatal("usage: orchestra msg <send|inbox>")
+		}
+		switch os.Args[2] {
+		case "send":
+			cmdMsgSend(os.Args[3:], messages, workers)
+		case "inbox":
+			cmdMsgInbox(os.Args[3:], messages)
+		default:
+			fatal("unknown msg subcommand: " + os.Args[2])
+		}
 
 	case "task":
 		if len(os.Args) < 3 {
@@ -163,7 +176,8 @@ Usage:
   orchestra worker kill <name>                       Kill a worker
   orchestra worker attach <name>                     Attach to worker's session
 
-  orchestra nudge <to> <message> --from <name>        Send a message into a session
+  orchestra msg send <to> <message> --from <name>     Send a message (writes to inbox + nudges)
+  orchestra msg inbox <name>                         Read unread messages
 
   orchestra task create --title "..." --desc "..."   Create a task
   orchestra task list                                List all tasks
@@ -454,27 +468,57 @@ func cmdWorkerPeek(args []string, mgr *worker.Manager) {
 	fmt.Println(output)
 }
 
-func cmdNudge(args []string, mgr *worker.Manager) {
-	fs := flag.NewFlagSet("nudge", flag.ExitOnError)
+func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager) {
+	fs := flag.NewFlagSet("msg send", flag.ExitOnError)
 	from := fs.String("from", "unknown", "Sender name")
 	fs.Parse(args)
 
 	if fs.NArg() < 2 {
-		fatal("usage: orchestra nudge <to> <message> [--from <name>]")
+		fatal("usage: orchestra msg send <to> <message> --from <name>")
 	}
-	name := fs.Arg(0)
-	message := strings.Join(fs.Args()[1:], " ")
+	to := fs.Arg(0)
+	content := strings.Join(fs.Args()[1:], " ")
 
-	session := mgr.SessionName(name)
-	if !tmux.HasSession(session) {
-		fatal(fmt.Sprintf("session %q is not running", name))
+	// Write to inbox
+	m, err := store.Send(*from, to, content)
+	if err != nil {
+		fatal(fmt.Sprintf("send failed: %v", err))
+	}
+	fmt.Printf("Message %s sent to %s.\n", m.ID, to)
+
+	// Nudge the recipient's tmux session as notification
+	session := mgr.SessionName(to)
+	if tmux.HasSession(session) {
+		notification := fmt.Sprintf("You have a new message from %s. Run: orchestra msg inbox %s", *from, to)
+		tmux.SendKeys(session, notification)
+	}
+}
+
+func cmdMsgInbox(args []string, store *msg.Store) {
+	if len(args) < 1 {
+		fatal("usage: orchestra msg inbox <name>")
+	}
+	name := args[0]
+
+	unread, err := store.Unread(name)
+	if err != nil {
+		fatal(err.Error())
 	}
 
-	formatted := fmt.Sprintf("[MESSAGE FROM %s]: %s", *from, message)
-	if err := tmux.SendKeys(session, formatted); err != nil {
-		fatal(fmt.Sprintf("nudge failed: %v", err))
+	if len(unread) == 0 {
+		fmt.Println("No new messages.")
+		return
 	}
-	fmt.Printf("Nudged %s (from %s).\n", name, *from)
+
+	for _, m := range unread {
+		ago := time.Since(m.CreatedAt).Truncate(time.Second)
+		fmt.Printf("[%s] from %s (%s ago):\n  %s\n\n", m.ID, m.From, ago, m.Content)
+	}
+
+	// Mark all as read
+	if err := store.MarkAllRead(name); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not mark messages as read: %v\n", err)
+	}
 }
 
 // --- Task commands ---
@@ -681,7 +725,8 @@ func buildPrompt(t *task.Task, workerName string) string {
 	b.WriteString("3. Create a PR targeting develop: gh pr create --base develop --fill\n")
 	b.WriteString("4. Mark yourself as done: orchestra done " + workerName + "\n")
 	b.WriteString("\nIf you need help or want to report progress, message the planner:\n")
-	b.WriteString("  orchestra nudge planner \"your message here\" --from " + workerName + "\n")
+	b.WriteString("  orchestra msg send planner \"your message here\" --from " + workerName + "\n")
+	b.WriteString("Check your inbox for messages: orchestra msg inbox " + workerName + "\n")
 	return b.String()
 }
 
