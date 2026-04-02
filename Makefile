@@ -8,7 +8,7 @@ WORK_DIR  := $(ORCH_HOME)/workspaces
 GO       := go
 GOFLAGS  :=
 
-.PHONY: build run clean reset install uninstall fmt vet test check workers tasks kill-all help
+.PHONY: build run clean reset install install-completion uninstall fmt vet test check workers tasks kill-all help
 
 ## ---- Build ----
 
@@ -18,12 +18,34 @@ build: ## Build the orchestra binary
 run: build ## Build and run (pass ARGS, e.g. make run ARGS="worker list")
 	$(BUILD_DIR)/$(BINARY) $(ARGS)
 
-install: build ## Copy binary to ~/.local/bin
-	mkdir -p $(HOME)/.local/bin
-	cp $(BUILD_DIR)/$(BINARY) $(HOME)/.local/bin/$(BINARY)
+install: build install-completion ## Copy binary to ~/.local/bin + install completions
+	@mkdir -p $(HOME)/.local/bin
+	@cp $(BUILD_DIR)/$(BINARY) $(HOME)/.local/bin/$(BINARY)
+	@echo ""
+	@echo "  \033[32m✓\033[0m Binary installed to \033[1m~/.local/bin/$(BINARY)\033[0m"
+	@echo ""
+	@echo "  Make sure \033[1m~/.local/bin\033[0m is in your PATH."
+	@echo "  Restart your shell or run:"
+	@echo ""
+	@echo "    \033[36meval \"\$$(orchestra completion zsh)\"\033[0m   (zsh)"
+	@echo "    \033[36meval \"\$$(orchestra completion bash)\"\033[0m  (bash)"
+	@echo ""
 
-uninstall: ## Remove binary from ~/.local/bin
-	rm -f $(HOME)/.local/bin/$(BINARY)
+install-completion: build ## Install shell completion for zsh and bash
+	@mkdir -p $(HOME)/.local/share/zsh/site-functions
+	@$(BUILD_DIR)/$(BINARY) completion zsh > $(HOME)/.local/share/zsh/site-functions/_$(BINARY)
+	@echo "  \033[32m✓\033[0m zsh  \033[2m→ ~/.local/share/zsh/site-functions/_$(BINARY)\033[0m"
+	@mkdir -p $(HOME)/.local/share/bash-completion/completions
+	@$(BUILD_DIR)/$(BINARY) completion bash > $(HOME)/.local/share/bash-completion/completions/$(BINARY)
+	@echo "  \033[32m✓\033[0m bash \033[2m→ ~/.local/share/bash-completion/completions/$(BINARY)\033[0m"
+
+uninstall: ## Remove binary and completions
+	@rm -f $(HOME)/.local/bin/$(BINARY)
+	@echo "  \033[31m✗\033[0m Removed \033[2m~/.local/bin/$(BINARY)\033[0m"
+	@rm -f $(HOME)/.local/share/zsh/site-functions/_$(BINARY)
+	@echo "  \033[31m✗\033[0m Removed \033[2m~/.local/share/zsh/site-functions/_$(BINARY)\033[0m"
+	@rm -f $(HOME)/.local/share/bash-completion/completions/$(BINARY)
+	@echo "  \033[31m✗\033[0m Removed \033[2m~/.local/share/bash-completion/completions/$(BINARY)\033[0m"
 
 ## ---- Code quality ----
 

@@ -20,7 +20,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.8.0"
+const version = "1.9.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -175,6 +175,9 @@ func main() {
 	case "run":
 		cmdRun(os.Args[2:], plans, tasks, workers, activeProj)
 
+	case "completion":
+		cmdCompletion(os.Args[2:])
+
 	case "help", "--help", "-h":
 		printUsage()
 
@@ -225,6 +228,8 @@ Usage:
   orchestra done <worker-name>                           Mark worker and all plan tasks as done
 
   orchestra run --name "..." --title "..." --desc "..."  Create plan + task + spawn + assign (all-in-one)
+
+  orchestra completion <zsh|bash>                        Output shell completion script
 
 Worktree Setup:
   Git worktrees don't include gitignored files (.env, configs). Attach a setup
