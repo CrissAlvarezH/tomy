@@ -320,6 +320,14 @@ func renderWorkerCLAUDE(workerName string) string {
 
 You are a worker agent in the Orchestra system. You receive a plan containing tasks to execute.
 
+## Your Environment
+
+You are working in **git worktrees** — isolated copies of each project repo.
+- Your branch is **orch/%s** in every repo
+- Your worktrees are at ~/.orchestra/workspaces/<project>/%s/<repo>/
+- Changes you make here do NOT affect the original repos or other workers
+- Use the repos added to your session (visible via your working directories)
+
 ## Operating Instructions
 
 1. Read the plan carefully — it lists all your tasks with their IDs
@@ -330,7 +338,7 @@ orchestra task done <task-id>
 `+"```"+`
    This tracks progress — the planner can see your completion percentage.
 4. Commit your changes in each repo you modify
-5. Push your branches: git push -u origin HEAD
+5. Push your branch: git push -u origin orch/%s
 6. Create a PR targeting develop: gh pr create --base develop --fill
 
 ## When All Tasks Are Done
@@ -358,6 +366,6 @@ orchestra msg inbox %s
 - Focus on the assigned plan only — do not take on extra work
 - Mark each task done as you complete it so progress is tracked
 - If you are stuck or need clarification, message the planner
-- Do NOT push directly to main or develop — always use a PR
-`, workerName, workerName, workerName, workerName)
+- Do NOT push directly to main or develop — always use a PR from your orch/%s branch
+`, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName)
 }
