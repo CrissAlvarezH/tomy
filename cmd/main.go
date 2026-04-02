@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -20,7 +23,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.10.0"
+const version = "1.11.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -179,6 +182,9 @@ func main() {
 	case "run":
 		cmdRun(os.Args[2:], plans, tasks, workers, activeProj)
 
+	case "monitor":
+		cmdMonitor(os.Args[2:], plans, tasks)
+
 	case "completion":
 		cmdCompletion(os.Args[2:])
 
@@ -234,6 +240,8 @@ Usage:
   orchestra done <worker-name>                           Mark worker and all plan tasks as done
 
   orchestra run --name "..." --title "..." --desc "..."  Create plan + task + spawn + assign (all-in-one)
+
+  orchestra monitor [--interval <seconds>]               Live dashboard of plans and tasks
 
   orchestra completion <zsh|bash>                        Output shell completion script
 
@@ -1309,6 +1317,206 @@ func notifyPlanner(mgr *worker.Manager, nq *nudge.Queue, fromWorker, notificatio
 		return
 	}
 	fmt.Printf("Planner busy — nudge queued.\n")
+}
+
+// --- monitor command ---
+
+const (
+	colorReset   = "\033[0m"
+	colorBold    = "\033[1m"
+	colorGreen   = "\033[32m"
+	colorYellow  = "\033[33m"
+	colorRed     = "\033[31m"
+	colorMagenta = "\033[35m"
+	colorCyan    = "\033[36m"
+	colorGray    = "\033[90m"
+)
+
+func statusColor(s string) string {
+	switch s {
+	case "done":
+		return colorGreen
+	case "in-progress":
+		return colorYellow
+	case "failed":
+		return colorRed
+	case "blocked":
+		return colorMagenta
+	case "assigned":
+		return colorCyan
+	default:
+		return colorGray
+	}
+}
+
+func statusIcon(s string) string {
+	switch s {
+	case "done":
+		return "✓"
+	case "in-progress":
+		return "◆"
+	case "failed":
+		return "✗"
+	case "blocked":
+		return "⊘"
+	case "assigned":
+		return "○"
+	default:
+		return "·"
+	}
+}
+
+func planIcon(s plan.Status) string {
+	switch s {
+	case plan.StatusDone:
+		return "✓"
+	case plan.StatusFailed:
+		return "✗"
+	default:
+		return "⏵"
+	}
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
+}
+
+func sortPlans(plans []plan.Plan) {
+	priority := map[plan.Status]int{
+		plan.StatusInProgress: 0,
+		plan.StatusAssigned:   1,
+		plan.StatusDraft:      2,
+		plan.StatusDone:       3,
+		plan.StatusFailed:     4,
+	}
+	sort.Slice(plans, func(i, j int) bool {
+		pi, pj := priority[plans[i].Status], priority[plans[j].Status]
+		if pi != pj {
+			return pi < pj
+		}
+		return plans[i].UpdatedAt.After(plans[j].UpdatedAt)
+	})
+}
+
+func sortTasks(tasks []task.Task) {
+	priority := map[task.Status]int{
+		task.StatusInProgress: 0,
+		task.StatusBlocked:    1,
+		task.StatusAssigned:   2,
+		task.StatusPending:    3,
+		task.StatusDone:       4,
+		task.StatusFailed:     5,
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		pi, pj := priority[tasks[i].Status], priority[tasks[j].Status]
+		if pi != pj {
+			return pi < pj
+		}
+		return tasks[i].CreatedAt.Before(tasks[j].CreatedAt)
+	})
+}
+
+func renderPlan(b *strings.Builder, p plan.Plan, planTasks []task.Task) {
+	doneCount := 0
+	for _, t := range planTasks {
+		if t.Status == task.StatusDone {
+			doneCount++
+		}
+	}
+
+	color := statusColor(string(p.Status))
+	icon := planIcon(p.Status)
+
+	// Plan header
+	fmt.Fprintf(b, "%s%s %s%s  %s[%s]%s", color, icon, colorBold, p.Name, color, p.Status, colorReset)
+	if p.WorkerName != "" {
+		fmt.Fprintf(b, "  worker: %s%s%s", colorCyan, p.WorkerName, colorReset)
+	}
+	if len(planTasks) > 0 {
+		fmt.Fprintf(b, "  ── %s%d/%d%s done", colorBold, doneCount, len(planTasks), colorReset)
+	}
+	b.WriteString("\n")
+
+	if len(planTasks) == 0 {
+		fmt.Fprintf(b, "  %s(no tasks)%s\n", colorGray, colorReset)
+		return
+	}
+
+	sortTasks(planTasks)
+
+	for i, t := range planTasks {
+		prefix := "├─"
+		if i == len(planTasks)-1 {
+			prefix = "└─"
+		}
+		tc := statusColor(string(t.Status))
+		ti := statusIcon(string(t.Status))
+		title := truncate(t.Title, 45)
+		fmt.Fprintf(b, "  %s ● #%s  %-45s %s%s %s%s", prefix, t.ID, title, tc, ti, t.Status, colorReset)
+		if t.Status == task.StatusBlocked && t.BlockedReason != "" {
+			fmt.Fprintf(b, " — %s", t.BlockedReason)
+		}
+		b.WriteString("\n")
+	}
+}
+
+func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.Store, interval int) {
+	b.Reset()
+	b.WriteString("\033[H\033[2J")
+
+	allPlans, err := planStore.List()
+	if err != nil {
+		fmt.Fprintf(b, "Error loading plans: %v\n", err)
+		return
+	}
+
+	fmt.Fprintf(b, "%sorchestra monitor%s  (every %ds, Ctrl+C to exit)\n", colorBold, colorReset, interval)
+	b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+
+	if len(allPlans) == 0 {
+		fmt.Fprintf(b, "%sNo plans found.%s\n", colorGray, colorReset)
+	} else {
+		sortPlans(allPlans)
+		for _, p := range allPlans {
+			planTasks, _ := taskStore.ListByPlan(p.ID)
+			renderPlan(b, p, planTasks)
+			b.WriteString("\n")
+		}
+	}
+
+	fmt.Fprintf(b, "%sLast updated: %s%s\n", colorGray, time.Now().Format("15:04:05"), colorReset)
+}
+
+func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store) {
+	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
+	interval := fs.Int("interval", 2, "refresh interval in seconds")
+	fs.Parse(args)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	var b strings.Builder
+
+	ticker := time.NewTicker(time.Duration(*interval) * time.Second)
+	defer ticker.Stop()
+
+	// Render immediately
+	renderMonitor(&b, plans, tasks, *interval)
+	fmt.Print(b.String())
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("\nMonitor stopped.")
+			return
+		case <-ticker.C:
+			renderMonitor(&b, plans, tasks, *interval)
+			fmt.Print(b.String())
+		}
+	}
 }
 
 func valueOr(s, fallback string) string {

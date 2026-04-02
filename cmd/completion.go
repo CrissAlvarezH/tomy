@@ -60,6 +60,7 @@ _orchestra() {
     'task:Manage tasks'
     'done:Mark worker and all plan tasks as done'
     'run:Create plan + task + spawn + assign (all-in-one)'
+    'monitor:Live dashboard of plans and tasks'
     'completion:Output shell completion script'
     'help:Show usage'
     'version:Show version'
@@ -200,7 +201,7 @@ _orchestra() {
   local cur prev words cword
   _init_completion || return
 
-  local commands="project repo plan planner worker msg task done run completion help version"
+  local commands="project repo plan planner worker msg task done run monitor completion help version"
 
   if [[ $cword -eq 1 ]]; then
     COMPREPLY=($(compgen -W "$commands" -- "$cur"))
