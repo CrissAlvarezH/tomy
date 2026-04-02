@@ -151,13 +151,13 @@ _orchestra() {
           ;;
         task)
           local -a subcmds
-          subcmds=('create:Create a task' 'list:List all tasks' 'status:Show task details' 'done:Mark a task as done')
+          subcmds=('create:Create a task' 'list:List all tasks' 'status:Show task details' 'done:Mark a task as done' 'block:Mark a task as blocked' 'unblock:Unblock a task')
           _arguments -C '1: :->subcmd' '*:: :->subargs'
           case $state in
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                status|done) _orchestra_tasks ;;
+                status|done|block|unblock) _orchestra_tasks ;;
               esac
               ;;
           esac
@@ -268,10 +268,10 @@ _orchestra() {
       ;;
     task)
       if [[ $cword -eq 2 ]]; then
-        COMPREPLY=($(compgen -W "create list status done" -- "$cur"))
+        COMPREPLY=($(compgen -W "create list status done block unblock" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          status|done) COMPREPLY=($(compgen -W "$(_orchestra_tasks)" -- "$cur")) ;;
+          status|done|block|unblock) COMPREPLY=($(compgen -W "$(_orchestra_tasks)" -- "$cur")) ;;
         esac
       fi
       ;;

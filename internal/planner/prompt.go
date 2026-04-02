@@ -21,6 +21,8 @@ var promptTemplate = template.Must(template.New("planner").Parse(`You are the Pl
 - orchestra plan list                                     — See all plans with progress
 - orchestra plan show <plan-id>                          — See plan tasks with completion percentage
 - orchestra task done <task-id>                           — Mark a single task as done
+- orchestra task block <task-id> --reason "..."            — Mark a task as blocked (with reason)
+- orchestra task unblock <task-id>                         — Unblock a task (back to in-progress)
 - orchestra task list                                     — See all tasks
 - orchestra worker spawn <name>                          — Spawn a worker (creates worktrees + tmux session)
 - orchestra worker list                                   — See all workers with plan progress

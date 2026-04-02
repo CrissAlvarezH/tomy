@@ -20,7 +20,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.9.2"
+const version = "1.10.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -88,7 +88,7 @@ func main() {
 
 	case "task":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra task <create|list|status|done>")
+			fatal("usage: orchestra task <create|list|status|done|block|unblock>")
 		}
 		switch os.Args[2] {
 		case "create":
@@ -99,6 +99,10 @@ func main() {
 			cmdTaskStatus(os.Args[3:], tasks)
 		case "done":
 			cmdTaskDone(os.Args[3:], tasks, plans, workers, messages, nudges)
+		case "block":
+			cmdTaskBlock(os.Args[3:], tasks)
+		case "unblock":
+			cmdTaskUnblock(os.Args[3:], tasks)
 		default:
 			fatal("unknown task subcommand: " + os.Args[2])
 		}
@@ -224,6 +228,8 @@ Usage:
   orchestra task list                                           List all tasks
   orchestra task status <task-id>                               Show task details
   orchestra task done <task-id>                                 Mark a task as done
+  orchestra task block <task-id> --reason "..."                 Mark a task as blocked
+  orchestra task unblock <task-id>                              Unblock a task (back to in-progress)
 
   orchestra done <worker-name>                           Mark worker and all plan tasks as done
 
@@ -553,19 +559,31 @@ func cmdPlanShow(args []string, store *plan.Store, tasks *task.Store) {
 	}
 
 	doneCount := 0
+	blockedCount := 0
 	for _, t := range planTasks {
 		if t.Status == task.StatusDone {
 			doneCount++
+		} else if t.Status == task.StatusBlocked {
+			blockedCount++
 		}
 	}
 	pct := (doneCount * 100) / len(planTasks)
-	fmt.Printf("\nProgress: %d/%d tasks done (%d%%)\n\n", doneCount, len(planTasks), pct)
+	progress := fmt.Sprintf("\nProgress: %d/%d tasks done", doneCount, len(planTasks))
+	if blockedCount > 0 {
+		progress += fmt.Sprintf(", %d blocked", blockedCount)
+	}
+	progress += fmt.Sprintf(" (%d%%)\n\n", pct)
+	fmt.Print(progress)
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "STATUS\tID\tTITLE")
 	for _, t := range planTasks {
 		marker := fmt.Sprintf("[%s]", t.Status)
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", marker, t.ID, t.Title)
+		title := t.Title
+		if t.Status == task.StatusBlocked && t.BlockedReason != "" {
+			title += " — " + t.BlockedReason
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", marker, t.ID, title)
 	}
 	tw.Flush()
 }
@@ -961,6 +979,9 @@ func cmdTaskStatus(args []string, store *task.Store) {
 	fmt.Printf("ID:      %s\n", t.ID)
 	fmt.Printf("Title:   %s\n", t.Title)
 	fmt.Printf("Status:  %s\n", t.Status)
+	if t.Status == task.StatusBlocked && t.BlockedReason != "" {
+		fmt.Printf("Blocked: %s\n", t.BlockedReason)
+	}
 	fmt.Printf("Plan:    %s\n", valueOr(t.PlanID, "-"))
 	fmt.Printf("Created: %s\n", t.CreatedAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("Updated: %s\n", t.UpdatedAt.Format("2006-01-02 15:04:05"))
@@ -970,6 +991,69 @@ func cmdTaskStatus(args []string, store *task.Store) {
 	if t.Result != "" {
 		fmt.Printf("\nResult:\n%s\n", t.Result)
 	}
+}
+
+func cmdTaskBlock(args []string, store *task.Store) {
+	fs := flag.NewFlagSet("task block", flag.ExitOnError)
+	reason := fs.String("reason", "", "Why the task is blocked")
+	// Reorder args so flags come before positional args
+	var flagArgs, posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+	fs.Parse(append(flagArgs, posArgs...))
+	remaining := fs.Args()
+
+	if len(remaining) < 1 {
+		fatal("usage: orchestra task block <task-id> --reason \"...\"")
+	}
+	if *reason == "" {
+		fatal("--reason is required")
+	}
+
+	taskID := remaining[0]
+	t, err := store.Get(taskID)
+	if err != nil {
+		fatal(err.Error())
+	}
+	if t.Status == task.StatusDone {
+		fatal(fmt.Sprintf("task %s is already done", taskID))
+	}
+
+	store.Update(taskID, func(t *task.Task) {
+		t.Status = task.StatusBlocked
+		t.BlockedReason = *reason
+	})
+	fmt.Printf("Task %s blocked: %s\n", taskID, *reason)
+}
+
+func cmdTaskUnblock(args []string, store *task.Store) {
+	if len(args) < 1 {
+		fatal("usage: orchestra task unblock <task-id>")
+	}
+	taskID := args[0]
+
+	t, err := store.Get(taskID)
+	if err != nil {
+		fatal(err.Error())
+	}
+	if t.Status != task.StatusBlocked {
+		fatal(fmt.Sprintf("task %s is not blocked (status: %s)", taskID, t.Status))
+	}
+
+	store.Update(taskID, func(t *task.Task) {
+		t.Status = task.StatusInProgress
+		t.BlockedReason = ""
+	})
+	fmt.Printf("Task %s unblocked (now in-progress).\n", taskID)
 }
 
 func cmdTaskDone(args []string, store *task.Store, plans *plan.Store, mgr *worker.Manager, inbox *msg.Store, nq *nudge.Queue) {

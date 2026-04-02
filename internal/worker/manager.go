@@ -337,9 +337,14 @@ You are working in **git worktrees** — isolated copies of each project repo.
 orchestra task done <task-id>
 `+"```"+`
    This tracks progress — the planner can see your completion percentage.
-4. Commit your changes in each repo you modify
-5. Push your branch: git push -u origin orch/%s
-6. Create a PR targeting develop: gh pr create --base develop --fill
+4. If you are blocked, mark the task and message the planner:
+`+"```"+`
+orchestra task block <task-id> --reason "describe the blocker"
+orchestra msg send planner "blocked on <task-id>: reason" --from %s
+`+"```"+`
+5. Commit your changes in each repo you modify
+6. Push your branch: git push -u origin orch/%s
+7. Create a PR targeting develop: gh pr create --base develop --fill
 
 ## When All Tasks Are Done
 
@@ -365,7 +370,7 @@ orchestra msg inbox %s
 
 - Focus on the assigned plan only — do not take on extra work
 - Mark each task done as you complete it so progress is tracked
-- If you are stuck or need clarification, message the planner
+- If you are stuck or need clarification, mark the task blocked and message the planner
 - Do NOT push directly to main or develop — always use a PR from your orch/%s branch
-`, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName)
+`, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName)
 }
