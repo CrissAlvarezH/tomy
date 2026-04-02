@@ -23,7 +23,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.11.0"
+const version = "1.12.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -91,15 +91,23 @@ func main() {
 
 	case "task":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra task <create|list|status|done|block|unblock>")
+			fatal("usage: orchestra task <create|edit|delete|move|list|status|start|done|block|unblock>")
 		}
 		switch os.Args[2] {
 		case "create":
 			cmdTaskCreate(os.Args[3:], tasks)
+		case "edit":
+			cmdTaskEdit(os.Args[3:], tasks)
+		case "delete":
+			cmdTaskDelete(os.Args[3:], tasks)
+		case "move":
+			cmdTaskMove(os.Args[3:], tasks)
 		case "list":
 			cmdTaskList(tasks)
 		case "status":
 			cmdTaskStatus(os.Args[3:], tasks)
+		case "start":
+			cmdTaskStart(os.Args[3:], tasks)
 		case "done":
 			cmdTaskDone(os.Args[3:], tasks, plans, workers, messages, nudges)
 		case "block":
@@ -112,11 +120,13 @@ func main() {
 
 	case "plan":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra plan <create|list|show|assign>")
+			fatal("usage: orchestra plan <create|edit|list|show|assign>")
 		}
 		switch os.Args[2] {
 		case "create":
 			cmdPlanCreate(os.Args[3:], plans)
+		case "edit":
+			cmdPlanEdit(os.Args[3:], plans)
 		case "list":
 			cmdPlanList(plans, tasks)
 		case "show":
@@ -212,6 +222,7 @@ Usage:
   orchestra repo setup <name>                            Show current setup command
 
   orchestra plan create --name "..." [--desc "..."]       Create a plan
+  orchestra plan edit <plan-id> --name "..."             Rename a plan
   orchestra plan list                                    List all plans with progress
   orchestra plan show <plan-id>                          Show plan tasks with completion percentage
   orchestra plan assign <plan-id> <worker-name>          Assign plan to a worker
@@ -231,8 +242,12 @@ Usage:
   orchestra msg inbox <name> --inject                    Drain nudge queue as system-reminder (for hooks)
 
   orchestra task create --plan <id> --title "..." --desc "..."  Create a task under a plan
+  orchestra task edit <task-id> --title "..." --desc "..."      Edit a task's title or description
+  orchestra task delete <task-id>                               Remove a task
+  orchestra task move <task-id> --before <task-id>              Reorder a task within a plan
   orchestra task list                                           List all tasks
   orchestra task status <task-id>                               Show task details
+  orchestra task start <task-id>                                Mark a task as in-progress
   orchestra task done <task-id>                                 Mark a task as done
   orchestra task block <task-id> --reason "..."                 Mark a task as blocked
   orchestra task unblock <task-id>                              Unblock a task (back to in-progress)
@@ -511,6 +526,43 @@ func cmdPlanCreate(args []string, store *plan.Store) {
 	fmt.Printf("Created plan %s: %s\n", p.ID, p.Name)
 	fmt.Printf("  file: %s\n", p.ContentFile)
 	fmt.Printf("\nAdd tasks: orchestra task create --plan %s --title \"...\"\n", p.ID)
+}
+
+func cmdPlanEdit(args []string, store *plan.Store) {
+	fs := flag.NewFlagSet("plan edit", flag.ExitOnError)
+	name := fs.String("name", "", "New plan name")
+	// Reorder args so flags come before positional args
+	var flagArgs, posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+	fs.Parse(append(flagArgs, posArgs...))
+
+	if fs.NArg() < 1 {
+		fatal("usage: orchestra plan edit <plan-id> --name \"...\"")
+	}
+	planID := fs.Arg(0)
+
+	if *name == "" {
+		fatal("--name is required")
+	}
+
+	err := store.Update(planID, func(p *plan.Plan) {
+		p.Name = *name
+	})
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	fmt.Printf("Updated plan %s\n", planID)
 }
 
 func cmdPlanList(store *plan.Store, tasks *task.Store) {
@@ -951,6 +1003,99 @@ func cmdTaskCreate(args []string, store *task.Store) {
 	fmt.Printf("Created task %s: %s (plan: %s)\n", t.ID, t.Title, *planID)
 }
 
+func cmdTaskEdit(args []string, store *task.Store) {
+	fs := flag.NewFlagSet("task edit", flag.ExitOnError)
+	title := fs.String("title", "", "New task title")
+	desc := fs.String("desc", "", "New task description")
+	// Reorder args so flags come before positional args
+	var flagArgs, posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+	fs.Parse(append(flagArgs, posArgs...))
+
+	if fs.NArg() < 1 {
+		fatal("usage: orchestra task edit <task-id> [--title \"...\"] [--desc \"...\"]")
+	}
+	taskID := fs.Arg(0)
+
+	if *title == "" && *desc == "" {
+		fatal("at least one of --title or --desc is required")
+	}
+
+	err := store.Update(taskID, func(t *task.Task) {
+		if *title != "" {
+			t.Title = *title
+		}
+		if *desc != "" {
+			t.Description = *desc
+		}
+	})
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	fmt.Printf("Updated task %s\n", taskID)
+}
+
+func cmdTaskDelete(args []string, store *task.Store) {
+	if len(args) < 1 {
+		fatal("usage: orchestra task delete <task-id>")
+	}
+	taskID := args[0]
+
+	t, err := store.Get(taskID)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	if err := store.Delete(taskID); err != nil {
+		fatal(err.Error())
+	}
+	fmt.Printf("Deleted task %s: %s\n", taskID, t.Title)
+}
+
+func cmdTaskMove(args []string, store *task.Store) {
+	fs := flag.NewFlagSet("task move", flag.ExitOnError)
+	before := fs.String("before", "", "Task ID to place this task before")
+	// Reorder args so flags come before positional args
+	var flagArgs, posArgs []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flagArgs = append(flagArgs, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flagArgs = append(flagArgs, args[i+1])
+				i++
+			}
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+	fs.Parse(append(flagArgs, posArgs...))
+
+	if fs.NArg() < 1 {
+		fatal("usage: orchestra task move <task-id> --before <target-task-id>")
+	}
+	taskID := fs.Arg(0)
+
+	if *before == "" {
+		fatal("--before is required")
+	}
+
+	if err := store.Move(taskID, *before); err != nil {
+		fatal(err.Error())
+	}
+	fmt.Printf("Moved task %s before %s\n", taskID, *before)
+}
+
 func cmdTaskList(store *task.Store) {
 	allTasks, err := store.List()
 	if err != nil {
@@ -999,6 +1144,21 @@ func cmdTaskStatus(args []string, store *task.Store) {
 	if t.Result != "" {
 		fmt.Printf("\nResult:\n%s\n", t.Result)
 	}
+}
+
+func cmdTaskStart(args []string, store *task.Store) {
+	if len(args) < 1 {
+		fatal("usage: orchestra task start <task-id>")
+	}
+	taskID := args[0]
+
+	err := store.Update(taskID, func(t *task.Task) {
+		t.Status = task.StatusInProgress
+	})
+	if err != nil {
+		fatal(err.Error())
+	}
+	fmt.Printf("Task %s is now in-progress.\n", taskID)
 }
 
 func cmdTaskBlock(args []string, store *task.Store) {

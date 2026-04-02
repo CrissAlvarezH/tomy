@@ -93,6 +93,53 @@ func (s *Store) ListByPlan(planID string) ([]Task, error) {
 	return result, nil
 }
 
+// Delete removes a task by ID.
+func (s *Store) Delete(id string) error {
+	tasks, err := s.loadAll()
+	if err != nil {
+		return err
+	}
+	for i := range tasks {
+		if tasks[i].ID == id {
+			tasks = append(tasks[:i], tasks[i+1:]...)
+			return s.saveAll(tasks)
+		}
+	}
+	return fmt.Errorf("task %q not found", id)
+}
+
+// Move repositions a task within a plan, placing it before the target task.
+func (s *Store) Move(id, beforeID string) error {
+	tasks, err := s.loadAll()
+	if err != nil {
+		return err
+	}
+
+	// Find and remove the task to move
+	var moving Task
+	found := false
+	for i := range tasks {
+		if tasks[i].ID == id {
+			moving = tasks[i]
+			tasks = append(tasks[:i], tasks[i+1:]...)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("task %q not found", id)
+	}
+
+	// Find the target position and insert before it
+	for i := range tasks {
+		if tasks[i].ID == beforeID {
+			tasks = append(tasks[:i], append([]Task{moving}, tasks[i:]...)...)
+			return s.saveAll(tasks)
+		}
+	}
+	return fmt.Errorf("target task %q not found", beforeID)
+}
+
 // Update modifies a task in-place using the provided function.
 func (s *Store) Update(id string, fn func(*Task)) error {
 	tasks, err := s.loadAll()

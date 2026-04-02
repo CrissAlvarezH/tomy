@@ -20,7 +20,7 @@ run: build ## Build and run (pass ARGS, e.g. make run ARGS="worker list")
 
 install: build install-completion ## Copy binary to ~/.local/bin + install completions
 	@mkdir -p $(HOME)/.local/bin
-	@cp $(BUILD_DIR)/$(BINARY) $(HOME)/.local/bin/$(BINARY)
+	@$(GO) build $(GOFLAGS) -o $(HOME)/.local/bin/$(BINARY) $(CMD_DIR)
 	@echo ""
 	@echo "  \033[32m✓\033[0m Binary installed to \033[1m~/.local/bin/$(BINARY)\033[0m"
 	@echo ""

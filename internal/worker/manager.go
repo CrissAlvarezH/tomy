@@ -331,20 +331,24 @@ You are working in **git worktrees** — isolated copies of each project repo.
 ## Operating Instructions
 
 1. Read the plan carefully — it lists all your tasks with their IDs
-2. Work through each task sequentially
-3. After completing each task, mark it done with its ID:
+2. Before starting each task, mark it as in-progress:
+`+"```"+`
+orchestra task start <task-id>
+`+"```"+`
+3. Work through the task
+4. After completing the task, mark it done:
 `+"```"+`
 orchestra task done <task-id>
 `+"```"+`
    This tracks progress — the planner can see your completion percentage.
-4. If you are blocked, mark the task and message the planner:
+5. If you are blocked, mark the task and message the planner:
 `+"```"+`
 orchestra task block <task-id> --reason "describe the blocker"
 orchestra msg send planner "blocked on <task-id>: reason" --from %s
 `+"```"+`
-5. Commit your changes in each repo you modify
-6. Push your branch: git push -u origin orch/%s
-7. Create a PR targeting develop: gh pr create --base develop --fill
+6. Commit your changes in each repo you modify
+7. Push your branch: git push -u origin orch/%s
+8. Create a PR targeting develop: gh pr create --base develop --fill
 
 ## When All Tasks Are Done
 
