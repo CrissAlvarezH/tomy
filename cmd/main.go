@@ -12,6 +12,7 @@ import (
 	"github.com/orchestra/v1/internal/config"
 	"github.com/orchestra/v1/internal/msg"
 	"github.com/orchestra/v1/internal/nudge"
+	"github.com/orchestra/v1/internal/plan"
 	"github.com/orchestra/v1/internal/planner"
 	"github.com/orchestra/v1/internal/project"
 	"github.com/orchestra/v1/internal/task"
@@ -19,7 +20,7 @@ import (
 	"github.com/orchestra/v1/internal/worker"
 )
 
-const version = "1.6.0"
+const version = "1.8.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -44,6 +45,7 @@ func main() {
 
 	workers := worker.NewManager(cfg.StateDir, cfg.WorkspacesDir, cfg.SessionPrefix)
 	tasks := task.NewStore(cfg.StateDir)
+	plans := plan.NewStore(cfg.StateDir, cfg.PlansDir)
 	projects := project.NewStore(cfg.StateDir)
 	messages := msg.NewStore(cfg.InboxDir)
 	nudges := nudge.NewQueue(cfg.NudgeQueueDir)
@@ -54,13 +56,13 @@ func main() {
 	switch os.Args[1] {
 	case "worker":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra worker <spawn|list|kill|attach>")
+			fatal("usage: orchestra worker <spawn|list|kill|attach|peek>")
 		}
 		switch os.Args[2] {
 		case "spawn":
 			cmdWorkerSpawn(os.Args[3:], workers, activeProj)
 		case "list":
-			cmdWorkerList(workers)
+			cmdWorkerList(workers, plans, tasks)
 		case "kill":
 			cmdWorkerKill(os.Args[3:], workers)
 		case "attach":
@@ -86,7 +88,7 @@ func main() {
 
 	case "task":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra task <create|list|status|assign>")
+			fatal("usage: orchestra task <create|list|status|done>")
 		}
 		switch os.Args[2] {
 		case "create":
@@ -95,10 +97,27 @@ func main() {
 			cmdTaskList(tasks)
 		case "status":
 			cmdTaskStatus(os.Args[3:], tasks)
-		case "assign":
-			cmdTaskAssign(os.Args[3:], tasks, workers, cfg.PlansDir)
+		case "done":
+			cmdTaskDone(os.Args[3:], tasks, plans, workers, messages, nudges)
 		default:
 			fatal("unknown task subcommand: " + os.Args[2])
+		}
+
+	case "plan":
+		if len(os.Args) < 3 {
+			fatal("usage: orchestra plan <create|list|show|assign>")
+		}
+		switch os.Args[2] {
+		case "create":
+			cmdPlanCreate(os.Args[3:], plans)
+		case "list":
+			cmdPlanList(plans, tasks)
+		case "show":
+			cmdPlanShow(os.Args[3:], plans, tasks)
+		case "assign":
+			cmdPlanAssign(os.Args[3:], plans, tasks, workers)
+		default:
+			fatal("unknown plan subcommand: " + os.Args[2])
 		}
 
 	case "project":
@@ -135,19 +154,6 @@ func main() {
 			fatal("unknown repo subcommand: " + os.Args[2])
 		}
 
-	case "plan":
-		if len(os.Args) < 3 {
-			fatal("usage: orchestra plan <list|show>")
-		}
-		switch os.Args[2] {
-		case "list":
-			cmdPlanList(cfg.PlansDir)
-		case "show":
-			cmdPlanShow(os.Args[3:], cfg.PlansDir)
-		default:
-			fatal("unknown plan subcommand: " + os.Args[2])
-		}
-
 	case "planner":
 		if len(os.Args) < 3 {
 			fatal("usage: orchestra planner <start|stop|attach>")
@@ -164,10 +170,10 @@ func main() {
 		}
 
 	case "done":
-		cmdDone(os.Args[2:], tasks, workers, messages, nudges)
+		cmdDone(os.Args[2:], plans, tasks, workers, messages, nudges)
 
 	case "run":
-		cmdRun(os.Args[2:], tasks, workers, activeProj, cfg.PlansDir)
+		cmdRun(os.Args[2:], plans, tasks, workers, activeProj)
 
 	case "help", "--help", "-h":
 		printUsage()
@@ -192,15 +198,17 @@ Usage:
   orchestra repo setup <name> --cmd <command>             Set/update post-worktree setup command
   orchestra repo setup <name>                            Show current setup command
 
-  orchestra plan list                                    List saved worker plans
-  orchestra plan show <worker-name>                      Show a worker's plan
+  orchestra plan create --name "..." [--desc "..."]       Create a plan
+  orchestra plan list                                    List all plans with progress
+  orchestra plan show <plan-id>                          Show plan tasks with completion percentage
+  orchestra plan assign <plan-id> <worker-name>          Assign plan to a worker
 
   orchestra planner start                                Select project + spawn planner (interactive)
   orchestra planner stop                                 Kill the planner session
   orchestra planner attach                               Attach to planner's session
 
   orchestra worker spawn <name>                          Spawn a worker (worktrees + run setup commands)
-  orchestra worker list                                  List all workers
+  orchestra worker list                                  List all workers with plan progress
   orchestra worker peek <name>                           See what a worker is doing right now
   orchestra worker kill <name>                           Kill a worker
   orchestra worker attach <name>                         Attach to worker's session
@@ -209,14 +217,14 @@ Usage:
   orchestra msg inbox <name>                             Read unread messages
   orchestra msg inbox <name> --inject                    Drain nudge queue as system-reminder (for hooks)
 
-  orchestra task create --title "..." --desc "..."       Create a task
-  orchestra task list                                    List all tasks
-  orchestra task status <task-id>                         Show task details
-  orchestra task assign <task-id> <worker-name>           Assign task to worker
+  orchestra task create --plan <id> --title "..." --desc "..."  Create a task under a plan
+  orchestra task list                                           List all tasks
+  orchestra task status <task-id>                               Show task details
+  orchestra task done <task-id>                                 Mark a task as done
 
-  orchestra done <worker-name>                           Mark worker and its task as done
+  orchestra done <worker-name>                           Mark worker and all plan tasks as done
 
-  orchestra run --title "..." --desc "..."               Create + spawn + assign (all-in-one)
+  orchestra run --name "..." --title "..." --desc "..."  Create plan + task + spawn + assign (all-in-one)
 
 Worktree Setup:
   Git worktrees don't include gitignored files (.env, configs). Attach a setup
@@ -453,53 +461,169 @@ func cmdRepoRemove(args []string, store *project.Store, proj *project.Project) {
 
 // --- Plan commands ---
 
-func cmdPlanList(plansDir string) {
-	entries, err := os.ReadDir(plansDir)
+func cmdPlanCreate(args []string, store *plan.Store) {
+	fs := flag.NewFlagSet("plan create", flag.ExitOnError)
+	name := fs.String("name", "", "Plan name (required)")
+	desc := fs.String("desc", "", "Plan description (written to the plan's markdown file)")
+	fs.Parse(args)
+
+	if *name == "" {
+		fatal("--name is required")
+	}
+
+	p, err := store.Create(*name)
 	if err != nil {
-		fmt.Println("No plans.")
-		return
+		fatal(err.Error())
 	}
 
-	var plans []os.DirEntry
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			plans = append(plans, e)
-		}
+	// Create the content file directory
+	os.MkdirAll(store.PlansDir(), 0755)
+
+	// Initialize plan file with header and optional description
+	var content strings.Builder
+	content.WriteString(fmt.Sprintf("# Plan: %s\n\nID: %s\n", p.Name, p.ID))
+	if *desc != "" {
+		content.WriteString(fmt.Sprintf("\n%s\n", *desc))
+	}
+	if err := os.WriteFile(p.ContentFile, []byte(content.String()), 0644); err != nil {
+		fatal(fmt.Sprintf("write plan file: %v", err))
 	}
 
-	if len(plans) == 0 {
+	fmt.Printf("Created plan %s: %s\n", p.ID, p.Name)
+	fmt.Printf("  file: %s\n", p.ContentFile)
+	fmt.Printf("\nAdd tasks: orchestra task create --plan %s --title \"...\"\n", p.ID)
+}
+
+func cmdPlanList(store *plan.Store, tasks *task.Store) {
+	allPlans, err := store.List()
+	if err != nil {
+		fatal(err.Error())
+	}
+	if len(allPlans) == 0 {
 		fmt.Println("No plans.")
 		return
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "WORKER\tFILE\tSIZE\tCREATED")
-	for _, e := range plans {
-		info, _ := e.Info()
-		name := strings.TrimSuffix(e.Name(), ".md")
-		size := "-"
-		created := "-"
-		if info != nil {
-			size = fmt.Sprintf("%d bytes", info.Size())
-			created = info.ModTime().Format("2006-01-02 15:04:05")
+	fmt.Fprintln(w, "ID\tNAME\tSTATUS\tWORKER\tPROGRESS")
+	for _, p := range allPlans {
+		workerName := valueOr(p.WorkerName, "-")
+		progress := "-"
+		planTasks, _ := tasks.ListByPlan(p.ID)
+		if len(planTasks) > 0 {
+			doneCount := 0
+			for _, t := range planTasks {
+				if t.Status == task.StatusDone {
+					doneCount++
+				}
+			}
+			pct := (doneCount * 100) / len(planTasks)
+			progress = fmt.Sprintf("%d/%d (%d%%)", doneCount, len(planTasks), pct)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, e.Name(), size, created)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, p.Status, workerName, progress)
 	}
 	w.Flush()
 }
 
-func cmdPlanShow(args []string, plansDir string) {
+func cmdPlanShow(args []string, store *plan.Store, tasks *task.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra plan show <worker-name>")
+		fatal("usage: orchestra plan show <plan-id>")
 	}
-	name := args[0]
+	planID := args[0]
 
-	planFile := filepath.Join(plansDir, name+".md")
-	data, err := os.ReadFile(planFile)
+	p, err := store.Get(planID)
 	if err != nil {
-		fatal(fmt.Sprintf("no plan found for %q", name))
+		fatal(err.Error())
 	}
-	fmt.Print(string(data))
+
+	fmt.Printf("Plan:   %s (%s)\n", p.Name, p.ID)
+	fmt.Printf("Status: %s\n", p.Status)
+	fmt.Printf("Worker: %s\n", valueOr(p.WorkerName, "-"))
+	fmt.Printf("File:   %s\n", p.ContentFile)
+
+	planTasks, _ := tasks.ListByPlan(p.ID)
+	if len(planTasks) == 0 {
+		fmt.Println("\nNo tasks in this plan.")
+		return
+	}
+
+	doneCount := 0
+	for _, t := range planTasks {
+		if t.Status == task.StatusDone {
+			doneCount++
+		}
+	}
+	pct := (doneCount * 100) / len(planTasks)
+	fmt.Printf("\nProgress: %d/%d tasks done (%d%%)\n\n", doneCount, len(planTasks), pct)
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "STATUS\tID\tTITLE")
+	for _, t := range planTasks {
+		marker := fmt.Sprintf("[%s]", t.Status)
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", marker, t.ID, t.Title)
+	}
+	tw.Flush()
+}
+
+func cmdPlanAssign(args []string, store *plan.Store, tasks *task.Store, mgr *worker.Manager) {
+	if len(args) < 2 {
+		fatal("usage: orchestra plan assign <plan-id> <worker-name>")
+	}
+	planID := args[0]
+	workerName := args[1]
+
+	p, err := store.Get(planID)
+	if err != nil {
+		fatal(err.Error())
+	}
+	if p.Status != plan.StatusDraft {
+		fatal(fmt.Sprintf("plan %s is %s, can only assign draft plans", planID, p.Status))
+	}
+
+	w, err := mgr.Get(workerName)
+	if err != nil {
+		fatal(err.Error())
+	}
+	if w.Status != worker.StatusIdle {
+		fatal(fmt.Sprintf("worker %s is %s, can only assign to idle workers", workerName, w.Status))
+	}
+
+	// Build the plan content file with all tasks
+	planTasks, _ := tasks.ListByPlan(planID)
+	if len(planTasks) == 0 {
+		fatal("plan has no tasks — add tasks first with: orchestra task create --plan " + planID + " --title \"...\"")
+	}
+
+	prompt := buildPlanPrompt(p, planTasks, workerName)
+	if err := os.WriteFile(p.ContentFile, []byte(prompt), 0644); err != nil {
+		fatal(fmt.Sprintf("write plan file: %v", err))
+	}
+
+	// Deliver the plan file to the worker
+	if err := mgr.Assign(workerName, prompt, store.PlansDir()); err != nil {
+		fatal(err.Error())
+	}
+
+	// Update plan
+	store.Update(planID, func(p *plan.Plan) {
+		p.Status = plan.StatusAssigned
+		p.WorkerName = workerName
+	})
+
+	// Update all tasks
+	for _, t := range planTasks {
+		tasks.Update(t.ID, func(t *task.Task) {
+			t.Status = task.StatusAssigned
+		})
+	}
+
+	// Update worker
+	mgr.Update(workerName, func(w *worker.Worker) {
+		w.Status = worker.StatusWorking
+		w.PlanID = planID
+	})
+
+	fmt.Printf("Assigned plan %q (%d tasks) to worker %s\n", p.Name, len(planTasks), workerName)
 }
 
 // --- Planner commands ---
@@ -575,21 +699,39 @@ func cmdWorkerSpawn(args []string, mgr *worker.Manager, proj *project.Project) {
 		w.Name, w.Session, w.WorkDir, len(w.WorktreeDirs))
 }
 
-func cmdWorkerList(mgr *worker.Manager) {
-	workers, err := mgr.List()
+func cmdWorkerList(mgr *worker.Manager, plans *plan.Store, tasks *task.Store) {
+	allWorkers, err := mgr.List()
 	if err != nil {
 		fatal(err.Error())
 	}
-	if len(workers) == 0 {
+	if len(allWorkers) == 0 {
 		fmt.Println("No workers running.")
 		return
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tTASK\tWORKTREES\tSESSION")
-	for _, wk := range workers {
-		taskID := valueOr(wk.TaskID, "-")
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", wk.Name, wk.Status, taskID, len(wk.WorktreeDirs), wk.Session)
+	fmt.Fprintln(w, "NAME\tSTATUS\tPLAN\tPROGRESS\tWORKTREES\tSESSION")
+	for _, wk := range allWorkers {
+		planInfo := "-"
+		progress := "-"
+		if wk.PlanID != "" {
+			p, err := plans.Get(wk.PlanID)
+			if err == nil {
+				planInfo = p.Name
+				planTasks, _ := tasks.ListByPlan(p.ID)
+				if len(planTasks) > 0 {
+					doneCount := 0
+					for _, t := range planTasks {
+						if t.Status == task.StatusDone {
+							doneCount++
+						}
+					}
+					pct := (doneCount * 100) / len(planTasks)
+					progress = fmt.Sprintf("%d/%d (%d%%)", doneCount, len(planTasks), pct)
+				}
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", wk.Name, wk.Status, planInfo, progress, len(wk.WorktreeDirs), wk.Session)
 	}
 	w.Flush()
 }
@@ -633,6 +775,8 @@ func cmdWorkerPeek(args []string, mgr *worker.Manager) {
 	}
 	fmt.Println(output)
 }
+
+// --- Message commands ---
 
 func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager, nq *nudge.Queue) {
 	fs := flag.NewFlagSet("msg send", flag.ExitOnError)
@@ -751,10 +895,14 @@ func cmdMsgInbox(args []string, store *msg.Store, nq *nudge.Queue) {
 
 func cmdTaskCreate(args []string, store *task.Store) {
 	fs := flag.NewFlagSet("task create", flag.ExitOnError)
+	planID := fs.String("plan", "", "Plan ID (required)")
 	title := fs.String("title", "", "Task title (required)")
 	desc := fs.String("desc", "", "Task description / prompt for Claude")
 	fs.Parse(args)
 
+	if *planID == "" {
+		fatal("--plan is required")
+	}
 	if *title == "" {
 		fatal("--title is required")
 	}
@@ -763,28 +911,34 @@ func cmdTaskCreate(args []string, store *task.Store) {
 	if err != nil {
 		fatal(err.Error())
 	}
-	fmt.Printf("Created task %s: %s\n", t.ID, t.Title)
+
+	// Link task to plan
+	store.Update(t.ID, func(t *task.Task) {
+		t.PlanID = *planID
+	})
+
+	fmt.Printf("Created task %s: %s (plan: %s)\n", t.ID, t.Title, *planID)
 }
 
 func cmdTaskList(store *task.Store) {
-	tasks, err := store.List()
+	allTasks, err := store.List()
 	if err != nil {
 		fatal(err.Error())
 	}
-	if len(tasks) == 0 {
+	if len(allTasks) == 0 {
 		fmt.Println("No tasks.")
 		return
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTITLE\tSTATUS\tASSIGNED TO")
-	for _, t := range tasks {
-		assignee := valueOr(t.AssignedTo, "-")
+	fmt.Fprintln(w, "ID\tTITLE\tSTATUS\tPLAN")
+	for _, t := range allTasks {
+		planID := valueOr(t.PlanID, "-")
 		title := t.Title
 		if len(title) > 50 {
 			title = title[:47] + "..."
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", t.ID, title, t.Status, assignee)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", t.ID, title, t.Status, planID)
 	}
 	w.Flush()
 }
@@ -799,12 +953,12 @@ func cmdTaskStatus(args []string, store *task.Store) {
 		fatal(err.Error())
 	}
 
-	fmt.Printf("ID:          %s\n", t.ID)
-	fmt.Printf("Title:       %s\n", t.Title)
-	fmt.Printf("Status:      %s\n", t.Status)
-	fmt.Printf("Assigned To: %s\n", valueOr(t.AssignedTo, "-"))
-	fmt.Printf("Created:     %s\n", t.CreatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("Updated:     %s\n", t.UpdatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("ID:      %s\n", t.ID)
+	fmt.Printf("Title:   %s\n", t.Title)
+	fmt.Printf("Status:  %s\n", t.Status)
+	fmt.Printf("Plan:    %s\n", valueOr(t.PlanID, "-"))
+	fmt.Printf("Created: %s\n", t.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("Updated: %s\n", t.UpdatedAt.Format("2006-01-02 15:04:05"))
 	if t.Description != "" {
 		fmt.Printf("\nDescription:\n%s\n", t.Description)
 	}
@@ -813,74 +967,126 @@ func cmdTaskStatus(args []string, store *task.Store) {
 	}
 }
 
-func cmdTaskAssign(args []string, store *task.Store, mgr *worker.Manager, plansDir string) {
-	if len(args) < 2 {
-		fatal("usage: orchestra task assign <task-id> <worker-name>")
+func cmdTaskDone(args []string, store *task.Store, plans *plan.Store, mgr *worker.Manager, inbox *msg.Store, nq *nudge.Queue) {
+	if len(args) < 1 {
+		fatal("usage: orchestra task done <task-id>")
 	}
 	taskID := args[0]
-	workerName := args[1]
 
 	t, err := store.Get(taskID)
 	if err != nil {
 		fatal(err.Error())
 	}
-	if t.Status != task.StatusPending {
-		fatal(fmt.Sprintf("task %s is %s, can only assign pending tasks", taskID, t.Status))
-	}
-
-	w, err := mgr.Get(workerName)
-	if err != nil {
-		fatal(err.Error())
-	}
-	if w.Status != worker.StatusIdle {
-		fatal(fmt.Sprintf("worker %s is %s, can only assign to idle workers", workerName, w.Status))
-	}
-
-	prompt := buildPrompt(t, workerName)
-	if err := mgr.Assign(workerName, prompt, plansDir); err != nil {
-		fatal(err.Error())
+	if t.Status == task.StatusDone {
+		fatal(fmt.Sprintf("task %s is already done", taskID))
 	}
 
 	store.Update(taskID, func(t *task.Task) {
-		t.Status = task.StatusAssigned
-		t.AssignedTo = workerName
+		t.Status = task.StatusDone
 	})
-	mgr.Update(workerName, func(w *worker.Worker) {
-		w.Status = worker.StatusWorking
-		w.TaskID = taskID
-	})
+	fmt.Printf("Task %s marked as done: %s\n", taskID, t.Title)
 
-	fmt.Printf("Assigned task %s to worker %s\n", taskID, workerName)
+	// Check if all tasks in the plan are done
+	if t.PlanID == "" {
+		return
+	}
+
+	p, err := plans.Get(t.PlanID)
+	if err != nil {
+		return
+	}
+
+	planTasks, _ := store.ListByPlan(p.ID)
+	total := len(planTasks)
+	doneCount := 0
+	allDone := true
+	for _, pt := range planTasks {
+		if pt.Status == task.StatusDone {
+			doneCount++
+		} else {
+			allDone = false
+		}
+	}
+
+	pct := 0
+	if total > 0 {
+		pct = (doneCount * 100) / total
+	}
+	fmt.Printf("Plan %q progress: %d/%d tasks done (%d%%)\n", p.Name, doneCount, total, pct)
+
+	if allDone && total > 0 {
+		// Mark plan as done
+		plans.Update(p.ID, func(p *plan.Plan) {
+			p.Status = plan.StatusDone
+		})
+		fmt.Printf("Plan %q complete!\n", p.Name)
+
+		// Mark worker as done if assigned
+		if p.WorkerName != "" {
+			mgr.Update(p.WorkerName, func(w *worker.Worker) {
+				w.Status = worker.StatusDone
+			})
+			fmt.Printf("Worker %s marked as done.\n", p.WorkerName)
+
+			// Notify planner
+			notification := fmt.Sprintf("Worker %s has finished plan %q (%d tasks).", p.WorkerName, p.Name, total)
+			m, err := inbox.Send(p.WorkerName, "planner", notification)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not notify planner: %v\n", err)
+				return
+			}
+			fmt.Printf("Planner notified (msg %s).\n", m.ID)
+
+			notifyPlanner(mgr, nq, p.WorkerName, notification)
+		}
+	}
 }
 
 // --- Run command (convenience) ---
 
-func cmdRun(args []string, store *task.Store, mgr *worker.Manager, proj *project.Project, plansDir string) {
+func cmdRun(args []string, plans *plan.Store, tasks *task.Store, mgr *worker.Manager, proj *project.Project) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	name := fs.String("name", "", "Plan name (required)")
 	title := fs.String("title", "", "Task title (required)")
 	desc := fs.String("desc", "", "Task description / prompt")
 	workerName := fs.String("worker", "", "Worker name (auto-generated if empty)")
 	fs.Parse(args)
 
+	if *name == "" {
+		fatal("--name is required")
+	}
 	if *title == "" {
 		fatal("--title is required")
 	}
 
 	requireActiveProject(proj)
 
-	t, err := store.Create(*title, *desc)
+	// Create plan
+	os.MkdirAll(plans.PlansDir(), 0755)
+	p, err := plans.Create(*name)
 	if err != nil {
 		fatal(err.Error())
 	}
+	fmt.Printf("Created plan %s: %s\n", p.ID, p.Name)
+
+	// Create task under plan
+	t, err := tasks.Create(*title, *desc)
+	if err != nil {
+		fatal(err.Error())
+	}
+	tasks.Update(t.ID, func(t *task.Task) {
+		t.PlanID = p.ID
+	})
 	fmt.Printf("Created task %s: %s\n", t.ID, t.Title)
 
-	name := *workerName
-	if name == "" {
-		name = "worker-" + t.ID
+	// Spawn worker
+	wName := *workerName
+	if wName == "" {
+		wName = "worker-" + p.ID
 	}
 
 	w, err := mgr.Spawn(worker.SpawnOptions{
-		Name:    name,
+		Name:    wName,
 		Project: proj,
 	})
 	if err != nil {
@@ -888,27 +1094,36 @@ func cmdRun(args []string, store *task.Store, mgr *worker.Manager, proj *project
 	}
 	fmt.Printf("Spawned worker %q (session: %s)\n", w.Name, w.Session)
 
-	prompt := buildPrompt(t, name)
-	if err := mgr.Assign(name, prompt, plansDir); err != nil {
+	// Build and deliver plan
+	planTasks := []task.Task{*t}
+	prompt := buildPlanPrompt(p, planTasks, wName)
+	if err := os.WriteFile(p.ContentFile, []byte(prompt), 0644); err != nil {
+		fatal(fmt.Sprintf("write plan file: %v", err))
+	}
+	if err := mgr.Assign(wName, prompt, plans.PlansDir()); err != nil {
 		fatal(err.Error())
 	}
 
-	store.Update(t.ID, func(t *task.Task) {
-		t.Status = task.StatusAssigned
-		t.AssignedTo = name
+	// Update statuses
+	plans.Update(p.ID, func(p *plan.Plan) {
+		p.Status = plan.StatusAssigned
+		p.WorkerName = wName
 	})
-	mgr.Update(name, func(w *worker.Worker) {
+	tasks.Update(t.ID, func(t *task.Task) {
+		t.Status = task.StatusAssigned
+	})
+	mgr.Update(wName, func(w *worker.Worker) {
 		w.Status = worker.StatusWorking
-		w.TaskID = t.ID
+		w.PlanID = p.ID
 	})
 
-	fmt.Printf("Assigned task %s to worker %s\n", t.ID, name)
-	fmt.Printf("\nAttach with: orchestra worker attach %s\n", name)
+	fmt.Printf("Assigned plan %q to worker %s\n", p.Name, wName)
+	fmt.Printf("\nAttach with: orchestra worker attach %s\n", wName)
 }
 
 // --- Done command ---
 
-func cmdDone(args []string, store *task.Store, mgr *worker.Manager, inbox *msg.Store, nq *nudge.Queue) {
+func cmdDone(args []string, plans *plan.Store, store *task.Store, mgr *worker.Manager, inbox *msg.Store, nq *nudge.Queue) {
 	if len(args) < 1 {
 		fatal("usage: orchestra done <worker-name>")
 	}
@@ -919,28 +1134,36 @@ func cmdDone(args []string, store *task.Store, mgr *worker.Manager, inbox *msg.S
 		fatal(err.Error())
 	}
 
-	// Mark the worker's task as done
-	var taskTitle string
-	if w.TaskID != "" {
-		store.Update(w.TaskID, func(t *task.Task) {
-			t.Status = task.StatusDone
-			taskTitle = t.Title
+	// Mark all plan tasks as done
+	if w.PlanID != "" {
+		planTasks, _ := store.ListByPlan(w.PlanID)
+		doneCount := 0
+		for _, t := range planTasks {
+			if t.Status != task.StatusDone {
+				store.Update(t.ID, func(t *task.Task) {
+					t.Status = task.StatusDone
+				})
+				doneCount++
+			}
+		}
+		if doneCount > 0 {
+			fmt.Printf("Marked %d task(s) as done.\n", doneCount)
+		}
+
+		// Mark plan as done
+		plans.Update(w.PlanID, func(p *plan.Plan) {
+			p.Status = plan.StatusDone
 		})
-		fmt.Printf("Task %s marked as done.\n", w.TaskID)
 	}
 
 	// Mark the worker as done
 	mgr.Update(workerName, func(w *worker.Worker) {
 		w.Status = worker.StatusDone
-		w.TaskID = ""
 	})
 	fmt.Printf("Worker %s marked as done.\n", workerName)
 
 	// Notify the planner
 	notification := fmt.Sprintf("Worker %s has finished.", workerName)
-	if taskTitle != "" {
-		notification = fmt.Sprintf("Worker %s has finished task: %s", workerName, taskTitle)
-	}
 	m, err := inbox.Send(workerName, "planner", notification)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not notify planner: %v\n", err)
@@ -948,37 +1171,55 @@ func cmdDone(args []string, store *task.Store, mgr *worker.Manager, inbox *msg.S
 	}
 	fmt.Printf("Planner notified (msg %s).\n", m.ID)
 
-	// Deliver directly if planner session is idle, otherwise queue nudge
+	notifyPlanner(mgr, nq, workerName, notification)
+}
+
+// --- Helpers ---
+
+func buildPlanPrompt(p *plan.Plan, planTasks []task.Task, workerName string) string {
+	var b strings.Builder
+
+	// Read existing plan file content (has the description from plan create)
+	existing, err := os.ReadFile(p.ContentFile)
+	if err == nil && len(existing) > 0 {
+		b.Write(existing)
+		b.WriteString("\n")
+	} else {
+		b.WriteString(fmt.Sprintf("# Plan: %s\n\nID: %s\n\n", p.Name, p.ID))
+	}
+
+	b.WriteString(fmt.Sprintf("Worker: %s\n\n", workerName))
+	b.WriteString("## Tasks\n\n")
+	for i, t := range planTasks {
+		b.WriteString(fmt.Sprintf("### %d. %s (task: %s)\n\n", i+1, t.Title, t.ID))
+		if t.Description != "" {
+			b.WriteString(t.Description)
+			b.WriteString("\n\n")
+		}
+		b.WriteString(fmt.Sprintf("When done: `orchestra task done %s`\n\n", t.ID))
+	}
+	b.WriteString("---\n")
+	b.WriteString("Follow your CLAUDE.md for completion and communication instructions.\n")
+	b.WriteString(fmt.Sprintf("When all tasks are done: `orchestra done %s`\n", workerName))
+	return b.String()
+}
+
+func notifyPlanner(mgr *worker.Manager, nq *nudge.Queue, fromWorker, notification string) {
 	session := mgr.SessionName("planner")
 	if !tmux.HasSession(session) {
 		return
 	}
 	if tmux.IsIdle(session, 3*time.Second) {
-		hint := fmt.Sprintf("Worker %s is done. Run: orchestra msg inbox planner", workerName)
+		hint := fmt.Sprintf("Worker %s is done. Run: orchestra msg inbox planner", fromWorker)
 		tmux.SendKeys(session, hint)
 		fmt.Printf("Delivered directly (planner was idle).\n")
 		return
 	}
-	if err := nq.Enqueue(workerName, "planner", notification); err != nil {
+	if err := nq.Enqueue(fromWorker, "planner", notification); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not queue nudge: %v\n", err)
 		return
 	}
 	fmt.Printf("Planner busy — nudge queued.\n")
-}
-
-// --- Helpers ---
-
-func buildPrompt(t *task.Task, workerName string) string {
-	var b strings.Builder
-	b.WriteString("# Plan for " + workerName + "\n\n")
-	b.WriteString("## " + t.Title + "\n\n")
-	if t.Description != "" {
-		b.WriteString(t.Description)
-		b.WriteString("\n")
-	}
-	b.WriteString("\n---\n")
-	b.WriteString("Follow your CLAUDE.md for completion and communication instructions.\n")
-	return b.String()
 }
 
 func valueOr(s, fallback string) string {

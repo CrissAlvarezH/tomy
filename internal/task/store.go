@@ -78,6 +78,21 @@ func (s *Store) Get(id string) (*Task, error) {
 	return nil, fmt.Errorf("task %q not found", id)
 }
 
+// ListByPlan returns all tasks belonging to a plan.
+func (s *Store) ListByPlan(planID string) ([]Task, error) {
+	tasks, err := s.loadAll()
+	if err != nil {
+		return nil, err
+	}
+	var result []Task
+	for _, t := range tasks {
+		if t.PlanID == planID {
+			result = append(result, t)
+		}
+	}
+	return result, nil
+}
+
 // Update modifies a task in-place using the provided function.
 func (s *Store) Update(id string, fn func(*Task)) error {
 	tasks, err := s.loadAll()

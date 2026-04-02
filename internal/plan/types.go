@@ -1,24 +1,23 @@
-package task
+package plan
 
 import "time"
 
 type Status string
 
 const (
-	StatusPending    Status = "pending"
+	StatusDraft      Status = "draft"
 	StatusAssigned   Status = "assigned"
 	StatusInProgress Status = "in-progress"
 	StatusDone       Status = "done"
 	StatusFailed     Status = "failed"
 )
 
-type Task struct {
+type Plan struct {
 	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
+	Name        string    `json:"name"`
+	ContentFile string    `json:"content_file"`
+	WorkerName  string    `json:"worker_name,omitempty"`
 	Status      Status    `json:"status"`
-	PlanID      string    `json:"plan_id,omitempty"`
-	Result      string    `json:"result,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

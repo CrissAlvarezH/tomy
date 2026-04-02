@@ -26,7 +26,7 @@ orchestra repo add /path/to/frontend --name frontend
 orchestra planner start
 ```
 
-Inside the planner session, discuss your goal. The planner will create tasks, spawn workers, and assign work — all using `orchestra` commands. Workers get git worktrees for all project repos and create PRs targeting `develop` when done.
+Inside the planner session, discuss your goal. The planner will create plans, add tasks, spawn workers, and assign plans — all using `orchestra` commands. Workers get git worktrees for all project repos and create PRs targeting `develop` when done.
 
 Detach from tmux with `Ctrl+B` then `D`. Re-attach with `orchestra planner attach`.
 
@@ -43,11 +43,12 @@ Make sure `~/.local/bin` is in your PATH.
 
 | Concept | Description |
 |---------|-------------|
-| **Project** | A named group (e.g. "my-ecommerce"). Contains repos and tasks. |
+| **Project** | A named group (e.g. "my-ecommerce"). Contains repos. |
 | **Repo** | A directory/git repo within a project. Workers get worktrees of each repo. Can have a setup command for post-worktree initialization. |
-| **Planner** | An interactive Claude session where you plan work. It spawns workers and assigns tasks. |
-| **Worker** | A Claude Code session in tmux with git worktrees for all project repos. Creates PRs to `develop` when done. |
-| **Task** | A unit of work with a title and description. Assigned to one worker. |
+| **Plan** | A named group of tasks for a feature. Has a content file (.md) and tracks completion percentage. Assigned to one worker. |
+| **Task** | A unit of work belonging to a plan. Has a title, description, and status. Individually tracked for progress. |
+| **Planner** | An interactive Claude session where you plan work. It creates plans, spawns workers, and monitors progress. |
+| **Worker** | A Claude Code session in tmux with git worktrees for all project repos. Receives a plan and executes its tasks. Creates PRs to `develop` when done. |
 
 ## Commands
 
@@ -70,6 +71,24 @@ orchestra repo setup <name> --cmd <command>                  # Set/update post-w
 orchestra repo setup <name>                                 # Show current setup command
 ```
 
+### Plan Management
+
+```bash
+orchestra plan create --name "..."                          # Create a plan
+orchestra plan list                                         # List all plans with progress
+orchestra plan show <plan-id>                               # Show plan tasks with completion percentage
+orchestra plan assign <plan-id> <worker-name>               # Assign plan to a worker
+```
+
+### Task Management
+
+```bash
+orchestra task create --plan <id> --title "..." --desc "..."  # Create a task under a plan
+orchestra task list                                            # List all tasks
+orchestra task status <task-id>                                # Show task details
+orchestra task done <task-id>                                  # Mark a task as done
+```
+
 ### Planner (Interactive Orchestrator)
 
 ```bash
@@ -82,35 +101,27 @@ orchestra planner stop                     # Kill the planner
 
 ```bash
 orchestra worker spawn <name>              # Spawn worker (worktrees + run setup commands)
-orchestra worker list                      # Show all workers with status
+orchestra worker list                      # Show all workers with plan progress
 orchestra worker peek <name>               # See what a worker is doing right now
 orchestra worker kill <name>               # Kill worker + clean up worktrees
 orchestra worker attach <name>             # Attach to worker's tmux session
-orchestra done <worker-name>               # Mark worker and its task as done
-```
-
-### Task Management
-
-```bash
-orchestra task create --title "..." --desc "..."   # Create a new task
-orchestra task list                                 # List all tasks
-orchestra task status <task-id>                     # Show task details
-orchestra task assign <task-id> <worker-name>       # Assign task to an idle worker
+orchestra done <worker-name>               # Mark worker and all plan tasks as done
 ```
 
 ### Communication
 
 ```bash
-orchestra nudge <name> <message>           # Send a message into a session (planner or worker)
+orchestra msg send <to> <message> --from <name>    # Send a message (idle: direct, busy: queued)
+orchestra msg inbox <name>                          # Read unread messages
 ```
 
 ### All-in-One
 
 ```bash
-orchestra run --title "..." --desc "..." [--worker <name>]
+orchestra run --name "..." --title "..." --desc "..." [--worker <name>]
 ```
 
-Creates a task, spawns a worker, and assigns in one command.
+Creates a plan with one task, spawns a worker, and assigns in one command.
 
 ## How It Works
 
@@ -124,20 +135,40 @@ orchestra planner start
 The planner spawns in its own directory (`~/.orchestra/planner/<project>/`) with a `CLAUDE.md` containing its instructions. It accesses all repos via `--add-dir`. You discuss the goal, and the planner runs:
 
 ```
-orchestra task create --title "Add user model" --desc "..."
-orchestra worker spawn add-user-model
-orchestra task assign abc123 add-user-model
+orchestra plan create --name "add-user-auth"
+orchestra task create --plan abc123 --title "Add user model" --desc "..."
+orchestra task create --plan abc123 --title "Add auth endpoints" --desc "..."
+orchestra task create --plan abc123 --title "Add integration tests" --desc "..."
+orchestra worker spawn auth-worker
+orchestra plan assign abc123 auth-worker
+```
+
+The plan groups all tasks and is assigned as a whole to the worker. Track progress:
+
+```
+orchestra plan show abc123
+
+Plan:   add-user-auth (abc123)
+Status: assigned
+Worker: auth-worker
+
+Progress: 1/3 tasks done (33%)
+
+STATUS          ID        TITLE
+[done]          d4e5      Add user model
+[assigned]      f6a7      Add auth endpoints
+[assigned]      b8c9      Add integration tests
 ```
 
 Workers get **git worktrees** for every repo in the project — isolated branches of each codebase:
 
 ```
-add-user-model/
-  ├── backend/   (worktree, branch: orch/add-user-model)
-  └── frontend/  (worktree, branch: orch/add-user-model)
+auth-worker/
+  ├── backend/   (worktree, branch: orch/auth-worker)
+  └── frontend/  (worktree, branch: orch/auth-worker)
 ```
 
-When a worker finishes, it commits, pushes, creates a PR targeting `develop` via `gh pr create`, and marks itself done with `orchestra done <name>`.
+Workers mark individual tasks done as they complete them with `orchestra task done <task-id>`. When the last task is marked done, the plan and worker are automatically completed and the planner is notified. Workers can also run `orchestra done <name>` to finish everything at once.
 
 ## Worktree Setup Commands
 
@@ -174,9 +205,15 @@ clone-v1/
 │   └── main.go                # CLI entry point — subcommand router
 ├── internal/
 │   ├── worker/
-│   │   ├── types.go           # Worker struct (status, project, worktrees)
+│   │   ├── types.go           # Worker struct (status, plan_id, worktrees)
 │   │   ├── manager.go         # Spawn (with multi-repo worktrees), kill, list, assign
 │   │   └── setup.go           # Post-worktree setup command runner
+│   ├── plan/
+│   │   ├── types.go           # Plan struct (name, content_file, status, worker)
+│   │   └── store.go           # Plan CRUD with file locking
+│   ├── task/
+│   │   ├── types.go           # Task struct (plan_id, status)
+│   │   └── store.go           # CRUD + ListByPlan on tasks.json
 │   ├── project/
 │   │   ├── types.go           # Project and Repo structs
 │   │   └── store.go           # Project CRUD, repo add/remove, active project
@@ -185,11 +222,13 @@ clone-v1/
 │   │   └── prompt.go          # System prompt template for the planner
 │   ├── git/
 │   │   └── git.go             # Git worktree add/remove, IsGitRepo
-│   ├── task/
-│   │   ├── types.go           # Task struct and status enum
-│   │   └── store.go           # CRUD on tasks.json with file locking
+│   ├── msg/
+│   │   ├── types.go           # Message struct
+│   │   └── store.go           # Per-recipient inbox (send, unread, mark read)
+│   ├── nudge/
+│   │   └── queue.go           # Filesystem queue for deferred notifications
 │   ├── tmux/
-│   │   └── tmux.go            # tmux wrapper (sessions, send-keys, capture-pane)
+│   │   └── tmux.go            # tmux wrapper (sessions, send-keys, idle detection)
 │   ├── config/
 │   │   └── config.go          # Resolves ~/.orchestra directories
 │   └── state/
@@ -226,18 +265,22 @@ All runtime data lives in `~/.orchestra/`:
 ```
 ~/.orchestra/
 ├── state/
-│   ├── workers.json           # Worker registry
-│   ├── tasks.json             # Task list
+│   ├── workers.json           # Worker registry (with plan_id per worker)
+│   ├── tasks.json             # Task list with plan_id and status tracking
+│   ├── plans.json             # Plan registry (name, content_file, status, worker)
 │   ├── projects.json          # Project registry
-│   └── active_project.json    # Currently active project pointer
+│   ├── active_project.json    # Currently active project pointer
+│   ├── inbox/                 # Per-recipient message inboxes
+│   ├── plans/                 # Plan content files (.md)
+│   └── nudge_queue/           # Deferred notifications for busy sessions
 ├── planner/
 │   └── my-ecommerce/          # Planner home for this project
 │       └── CLAUDE.md          # Planner instructions (survives /clear)
 └── workspaces/
     └── my-ecommerce/          # Project-scoped workspaces
-        ├── add-user-model/    # Worker workspace
-        │   ├── backend/       # Git worktree (branch: orch/add-user-model)
-        │   └── frontend/      # Git worktree (branch: orch/add-user-model)
+        ├── auth-worker/       # Worker workspace
+        │   ├── backend/       # Git worktree (branch: orch/auth-worker)
+        │   └── frontend/      # Git worktree (branch: orch/auth-worker)
         └── fix-api/
             ├── backend/
             └── frontend/
@@ -256,21 +299,22 @@ orchestra repo add ~/code/my-api-frontend --name frontend
 # Start the planner and plan together
 orchestra planner start
 
-# (Inside the planner session, you discuss and it creates tasks + spawns workers)
+# (Inside the planner session, you discuss and it creates plans + spawns workers)
 # Detach with Ctrl+B D
 
 # Check progress from outside
 orchestra worker list
-orchestra task list
+orchestra plan list
+orchestra plan show abc123
 
 # See what a worker is doing
-orchestra worker peek add-user-model
+orchestra worker peek auth-worker
 
 # Send a message to a worker
-orchestra nudge add-user-model "prioritize the API endpoints first"
+orchestra msg send auth-worker "prioritize the API endpoints first" --from user
 
 # Attach to a worker to see its progress
-orchestra worker attach add-user-model
+orchestra worker attach auth-worker
 
 # Re-attach to the planner
 orchestra planner attach
@@ -282,11 +326,10 @@ make kill-all
 
 ## Limitations
 
-- No task dependencies — tasks are independent
+- No task dependencies — tasks are independent (no blocking/ordering constraints)
+- No worker health monitoring — stuck or crashed workers must be detected manually
 - No memory — workers don't share context between sessions
 - Planner doesn't auto-monitor — you plan interactively, it doesn't poll
-
-These are addressed in v2 (automated orchestrator), v3 (memory), and v4 (communication).
 
 ## Dependencies
 

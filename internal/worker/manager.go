@@ -187,7 +187,6 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		ID:           opts.Name,
 		Name:         opts.Name,
 		Status:       StatusIdle,
-		TaskID:       "",
 		ProjectID:    opts.Project.ID,
 		Session:      session,
 		WorkDir:      workDir,
@@ -319,19 +318,25 @@ func (m *Manager) Assign(name string, prompt string, plansDir string) error {
 func renderWorkerCLAUDE(workerName string) string {
 	return fmt.Sprintf(`# Worker: %s
 
-You are a worker agent in the Orchestra system. Your job is to execute the plan you receive.
+You are a worker agent in the Orchestra system. You receive a plan containing tasks to execute.
 
 ## Operating Instructions
 
-1. Read the plan carefully — it contains all your tasks in order
+1. Read the plan carefully — it lists all your tasks with their IDs
 2. Work through each task sequentially
-3. Commit your changes in each repo you modify
-4. Push your branches: git push -u origin HEAD
-5. Create a PR targeting develop: gh pr create --base develop --fill
+3. After completing each task, mark it done with its ID:
+`+"```"+`
+orchestra task done <task-id>
+`+"```"+`
+   This tracks progress — the planner can see your completion percentage.
+4. Commit your changes in each repo you modify
+5. Push your branches: git push -u origin HEAD
+6. Create a PR targeting develop: gh pr create --base develop --fill
 
-## When Done
+## When All Tasks Are Done
 
-Mark yourself as done:
+When you mark the last task done, the plan and worker are automatically completed.
+You can also finish everything at once:
 `+"```"+`
 orchestra done %s
 `+"```"+`
@@ -351,6 +356,7 @@ orchestra msg inbox %s
 ## Rules
 
 - Focus on the assigned plan only — do not take on extra work
+- Mark each task done as you complete it so progress is tracked
 - If you are stuck or need clarification, message the planner
 - Do NOT push directly to main or develop — always use a PR
 `, workerName, workerName, workerName, workerName)

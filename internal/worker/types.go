@@ -15,7 +15,7 @@ type Worker struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	Status       Status    `json:"status"`
-	TaskID       string    `json:"task_id,omitempty"`
+	PlanID       string    `json:"plan_id,omitempty"`
 	ProjectID    string    `json:"project_id"`
 	Session      string    `json:"session"`
 	WorkDir      string    `json:"work_dir"`
