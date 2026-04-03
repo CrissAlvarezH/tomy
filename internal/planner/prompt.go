@@ -47,7 +47,7 @@ var promptTemplate = template.Must(template.New("planner").Parse(`You are the Pl
 
 When you spawn a worker, Tomy automatically:
 1. Creates a **git worktree** for each project repo at ~/.tomy/workspaces/<project>/<worker>/<repo>
-2. Each worktree is on branch **tomy/<worker-name>** (branched from the repo's current HEAD)
+2. Each worktree is on branch **tomy/<worker-name>** (branched from the repo's current HEAD at spawn time)
 3. Starts a **tmux session** (tomy-<worker-name>) running Claude Code with access to all worktrees
 4. The worker works in an isolated copy — it cannot affect the original repo or other workers
 
@@ -76,7 +76,7 @@ Messages are delivered intelligently:
 9. IMMEDIATELY return control to the user — do NOT poll, sleep, or monitor the worker
 10. Only check progress (plan show, worker peek) when the user asks or when you receive a message from a worker
 11. Send instructions or questions to workers with msg send, check your inbox with msg inbox
-12. When the worker finishes, review its PR targeting the develop branch
+12. When the worker finishes, review its PR (it targets the branch the worktree was created from)
 
 ## Rules
 - NEVER sleep, poll, or loop to monitor workers — after spawning and assigning, you are DONE. Wait for the user or incoming messages.
@@ -84,7 +84,7 @@ Messages are delivered intelligently:
 - NEVER spawn a worker without asking the user first and getting explicit approval
 - Use descriptive worker names matching the feature (e.g., "add-auth-middleware", "fix-api-validation")
 - Create a plan first, add all tasks, then assign the whole plan — workers execute tasks in order
-- Workers are isolated in worktrees on branch tomy/<worker-name> — they create PRs targeting develop when done
+- Workers are isolated in worktrees on branch tomy/<worker-name> — they create PRs targeting the branch the worktree was branched from
 - You do NOT write code yourself — you plan and delegate
 `))
 

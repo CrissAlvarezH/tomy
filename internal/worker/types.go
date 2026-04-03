@@ -20,5 +20,6 @@ type Worker struct {
 	Session      string    `json:"session"`
 	WorkDir      string    `json:"work_dir"`
 	WorktreeDirs []string  `json:"worktree_dirs,omitempty"`
+	BaseBranch   string    `json:"base_branch,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }

@@ -76,10 +76,17 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 	// Create worktrees for each git repo in the project
 	var worktreeDirs []string
 	var addDirs []string
+	var baseBranch string
 	branchName := "tomy/" + opts.Name
 
 	for _, repo := range opts.Project.Repos {
 		if repo.IsGitRepo {
+			// Capture base branch from the first git repo
+			if baseBranch == "" {
+				if branch, err := git.CurrentBranch(repo.Path); err == nil {
+					baseBranch = branch
+				}
+			}
 			wtPath := filepath.Join(workspaceDir, repo.Name)
 			if err := git.WorktreeAdd(repo.Path, wtPath, branchName); err != nil {
 				// Clean up already-created worktrees on failure
@@ -119,8 +126,12 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 	// Worker home is the workspace root (CLAUDE.md lives here)
 	workDir := workspaceDir
 
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
 	// Write worker CLAUDE.md with operating instructions
-	workerCLAUDE := renderWorkerCLAUDE(opts.Name)
+	workerCLAUDE := renderWorkerCLAUDE(opts.Name, baseBranch)
 	claudeMdPath := filepath.Join(workspaceDir, "CLAUDE.md")
 	if err := os.WriteFile(claudeMdPath, []byte(workerCLAUDE), 0644); err != nil {
 		return nil, fmt.Errorf("write worker CLAUDE.md: %w", err)
@@ -191,6 +202,7 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		Session:      session,
 		WorkDir:      workDir,
 		WorktreeDirs: worktreeDirs,
+		BaseBranch:   baseBranch,
 		CreatedAt:    time.Now(),
 	}
 
@@ -315,7 +327,7 @@ func (m *Manager) Assign(name string, prompt string, plansDir string) error {
 }
 
 // renderWorkerCLAUDE generates the CLAUDE.md content for a worker.
-func renderWorkerCLAUDE(workerName string) string {
+func renderWorkerCLAUDE(workerName, baseBranch string) string {
 	return fmt.Sprintf(`# Worker: %s
 
 You are a worker agent in the Tomy system. You receive a plan containing tasks to execute.
@@ -323,7 +335,7 @@ You are a worker agent in the Tomy system. You receive a plan containing tasks t
 ## Your Environment
 
 You are working in **git worktrees** — isolated copies of each project repo.
-- Your branch is **tomy/%s** in every repo
+- Your branch is **tomy/%s** in every repo (branched from **%s**)
 - Your worktrees are at ~/.tomy/workspaces/<project>/%s/<repo>/
 - Changes you make here do NOT affect the original repos or other workers
 - Use the repos added to your session (visible via your working directories)
@@ -348,7 +360,7 @@ tomy msg send planner "blocked on <task-id>: reason" --from %s
 `+"```"+`
 6. Commit your changes in each repo you modify
 7. Push your branch: git push -u origin tomy/%s
-8. Create a PR targeting develop: gh pr create --base develop --fill
+8. Create a PR targeting %s: gh pr create --base %s --fill
 
 ## When All Tasks Are Done
 
@@ -375,6 +387,6 @@ tomy msg inbox %s
 - Focus on the assigned plan only — do not take on extra work
 - Mark each task done as you complete it so progress is tracked
 - If you are stuck or need clarification, mark the task blocked and message the planner
-- Do NOT push directly to main or develop — always use a PR from your tomy/%s branch
-`, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName)
+- Do NOT push directly to %s — always use a PR from your tomy/%s branch
+`, workerName, workerName, baseBranch, workerName, workerName, workerName, baseBranch, baseBranch, workerName, workerName, workerName, baseBranch, workerName)
 }

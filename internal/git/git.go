@@ -29,6 +29,18 @@ func WorktreeAdd(repoPath, worktreePath, branchName string) error {
 	return nil
 }
 
+// CurrentBranch returns the current branch name of a git repo.
+func CurrentBranch(repoPath string) (string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git rev-parse: %s", strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
 // WorktreeRemove removes a git worktree.
 func WorktreeRemove(repoPath, worktreePath string) error {
 	cmd := exec.Command("git", "-C", repoPath, "worktree", "remove", worktreePath, "--force")
