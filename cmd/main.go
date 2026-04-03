@@ -23,7 +23,7 @@ import (
 	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "2.1.0"
+const version = "2.2.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -139,13 +139,15 @@ func main() {
 
 	case "project":
 		if len(os.Args) < 3 {
-			fatal("usage: tomy project <create|list|set|status>")
+			fatal("usage: tomy project <create|list|remove|set|status>")
 		}
 		switch os.Args[2] {
 		case "create":
 			cmdProjectCreate(os.Args[3:], projects)
 		case "list":
 			cmdProjectList(projects)
+		case "remove":
+			cmdProjectRemove(os.Args[3:], projects)
 		case "set":
 			cmdProjectSet(os.Args[3:], projects)
 		case "status":
@@ -212,6 +214,7 @@ func printUsage() {
 Usage:
   tomy project create <name>                        Create a new project
   tomy project list                                 List all projects
+  tomy project remove <name|id>                     Remove a project
   tomy project set <name>                           Set active project
   tomy project status                               Show active project details
 
@@ -289,6 +292,20 @@ func cmdProjectCreate(args []string, store *project.Store) {
 		fatal(err.Error())
 	}
 	fmt.Printf("Created project %q (id: %s, set as active)\n", p.Name, p.ID)
+}
+
+func cmdProjectRemove(args []string, store *project.Store) {
+	if len(args) < 1 {
+		fatal("usage: tomy project remove <name|id>")
+	}
+	p, err := store.Get(args[0])
+	if err != nil {
+		fatal(err.Error())
+	}
+	if err := store.Remove(args[0]); err != nil {
+		fatal(err.Error())
+	}
+	fmt.Printf("Removed project %q (id: %s)\n", p.Name, p.ID)
 }
 
 func cmdProjectList(store *project.Store) {

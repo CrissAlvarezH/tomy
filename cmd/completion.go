@@ -78,13 +78,13 @@ _tomy() {
       case $words[1] in
         project)
           local -a subcmds
-          subcmds=('create:Create a new project' 'list:List all projects' 'set:Set active project' 'status:Show active project details')
+          subcmds=('create:Create a new project' 'list:List all projects' 'remove:Remove a project' 'set:Set active project' 'status:Show active project details')
           _arguments -C '1: :->subcmd' '*:: :->subargs'
           case $state in
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                set) _tomy_projects ;;
+                remove|set) _tomy_projects ;;
               esac
               ;;
           esac
@@ -214,10 +214,10 @@ _tomy() {
   case "$cmd" in
     project)
       if [[ $cword -eq 2 ]]; then
-        COMPREPLY=($(compgen -W "create list set status" -- "$cur"))
+        COMPREPLY=($(compgen -W "create list remove set status" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          set) COMPREPLY=($(compgen -W "$(_tomy_projects)" -- "$cur")) ;;
+          remove|set) COMPREPLY=($(compgen -W "$(_tomy_projects)" -- "$cur")) ;;
         esac
       fi
       ;;

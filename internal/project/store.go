@@ -96,6 +96,40 @@ func (s *Store) Get(idOrName string) (*Project, error) {
 	return nil, fmt.Errorf("project %q not found", idOrName)
 }
 
+// Remove deletes a project by ID or name. If the removed project was active, clears the active project.
+func (s *Store) Remove(idOrName string) error {
+	projects, err := s.loadAll()
+	if err != nil {
+		return err
+	}
+
+	found := false
+	var remaining []Project
+	var removedID string
+	for _, p := range projects {
+		if p.ID == idOrName || p.Name == idOrName {
+			found = true
+			removedID = p.ID
+		} else {
+			remaining = append(remaining, p)
+		}
+	}
+	if !found {
+		return fmt.Errorf("project %q not found", idOrName)
+	}
+
+	if err := s.saveAll(remaining); err != nil {
+		return err
+	}
+
+	// Clear active project if it was the one removed
+	active, _ := s.GetActive()
+	if active != nil && active.ID == removedID {
+		return s.SetActive("")
+	}
+	return nil
+}
+
 // SetActive sets the active project by ID.
 func (s *Store) SetActive(projectID string) error {
 	return state.WriteJSON(s.activePath, ActiveProject{ProjectID: projectID})
