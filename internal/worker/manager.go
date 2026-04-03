@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/orchestra/v1/internal/git"
-	"github.com/orchestra/v1/internal/project"
-	"github.com/orchestra/v1/internal/state"
-	"github.com/orchestra/v1/internal/tmux"
+	"github.com/tomy/v1/internal/git"
+	"github.com/tomy/v1/internal/project"
+	"github.com/tomy/v1/internal/state"
+	"github.com/tomy/v1/internal/tmux"
 )
 
 type Manager struct {
@@ -76,7 +76,7 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 	// Create worktrees for each git repo in the project
 	var worktreeDirs []string
 	var addDirs []string
-	branchName := "orch/" + opts.Name
+	branchName := "tomy/" + opts.Name
 
 	for _, repo := range opts.Project.Repos {
 		if repo.IsGitRepo {
@@ -140,7 +140,7 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
         "hooks": [
           {
             "type": "command",
-            "command": "orchestra msg inbox %s --inject"
+            "command": "tomy msg inbox %s --inject"
           }
         ]
       }
@@ -318,13 +318,13 @@ func (m *Manager) Assign(name string, prompt string, plansDir string) error {
 func renderWorkerCLAUDE(workerName string) string {
 	return fmt.Sprintf(`# Worker: %s
 
-You are a worker agent in the Orchestra system. You receive a plan containing tasks to execute.
+You are a worker agent in the Tomy system. You receive a plan containing tasks to execute.
 
 ## Your Environment
 
 You are working in **git worktrees** — isolated copies of each project repo.
-- Your branch is **orch/%s** in every repo
-- Your worktrees are at ~/.orchestra/workspaces/<project>/%s/<repo>/
+- Your branch is **tomy/%s** in every repo
+- Your worktrees are at ~/.tomy/workspaces/<project>/%s/<repo>/
 - Changes you make here do NOT affect the original repos or other workers
 - Use the repos added to your session (visible via your working directories)
 
@@ -333,21 +333,21 @@ You are working in **git worktrees** — isolated copies of each project repo.
 1. Read the plan carefully — it lists all your tasks with their IDs
 2. Before starting each task, mark it as in-progress:
 `+"```"+`
-orchestra task start <task-id>
+tomy task start <task-id>
 `+"```"+`
 3. Work through the task
 4. After completing the task, mark it done:
 `+"```"+`
-orchestra task done <task-id>
+tomy task done <task-id>
 `+"```"+`
    This tracks progress — the planner can see your completion percentage.
 5. If you are blocked, mark the task and message the planner:
 `+"```"+`
-orchestra task block <task-id> --reason "describe the blocker"
-orchestra msg send planner "blocked on <task-id>: reason" --from %s
+tomy task block <task-id> --reason "describe the blocker"
+tomy msg send planner "blocked on <task-id>: reason" --from %s
 `+"```"+`
 6. Commit your changes in each repo you modify
-7. Push your branch: git push -u origin orch/%s
+7. Push your branch: git push -u origin tomy/%s
 8. Create a PR targeting develop: gh pr create --base develop --fill
 
 ## When All Tasks Are Done
@@ -355,19 +355,19 @@ orchestra msg send planner "blocked on <task-id>: reason" --from %s
 When you mark the last task done, the plan and worker are automatically completed.
 You can also finish everything at once:
 `+"```"+`
-orchestra done %s
+tomy done %s
 `+"```"+`
 
 ## Communication
 
 Send messages to the planner:
 `+"```"+`
-orchestra msg send planner "your message" --from %s
+tomy msg send planner "your message" --from %s
 `+"```"+`
 
 Check your inbox for messages:
 `+"```"+`
-orchestra msg inbox %s
+tomy msg inbox %s
 `+"```"+`
 
 ## Rules
@@ -375,6 +375,6 @@ orchestra msg inbox %s
 - Focus on the assigned plan only — do not take on extra work
 - Mark each task done as you complete it so progress is tracked
 - If you are stuck or need clarification, mark the task blocked and message the planner
-- Do NOT push directly to main or develop — always use a PR from your orch/%s branch
+- Do NOT push directly to main or develop — always use a PR from your tomy/%s branch
 `, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName, workerName)
 }

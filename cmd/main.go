@@ -12,18 +12,18 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/orchestra/v1/internal/config"
-	"github.com/orchestra/v1/internal/msg"
-	"github.com/orchestra/v1/internal/nudge"
-	"github.com/orchestra/v1/internal/plan"
-	"github.com/orchestra/v1/internal/planner"
-	"github.com/orchestra/v1/internal/project"
-	"github.com/orchestra/v1/internal/task"
-	"github.com/orchestra/v1/internal/tmux"
-	"github.com/orchestra/v1/internal/worker"
+	"github.com/tomy/v1/internal/config"
+	"github.com/tomy/v1/internal/msg"
+	"github.com/tomy/v1/internal/nudge"
+	"github.com/tomy/v1/internal/plan"
+	"github.com/tomy/v1/internal/planner"
+	"github.com/tomy/v1/internal/project"
+	"github.com/tomy/v1/internal/task"
+	"github.com/tomy/v1/internal/tmux"
+	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "1.12.0"
+const version = "2.0.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -37,7 +37,7 @@ func main() {
 	}
 
 	if os.Args[1] == "--version" || os.Args[1] == "version" {
-		fmt.Println("orchestra v" + version)
+		fmt.Println("tomy v" + version)
 		return
 	}
 
@@ -59,7 +59,7 @@ func main() {
 	switch os.Args[1] {
 	case "worker":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra worker <spawn|list|kill|attach|peek>")
+			fatal("usage: tomy worker <spawn|list|kill|attach|peek>")
 		}
 		switch os.Args[2] {
 		case "spawn":
@@ -78,7 +78,7 @@ func main() {
 
 	case "msg":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra msg <send|inbox>")
+			fatal("usage: tomy msg <send|inbox>")
 		}
 		switch os.Args[2] {
 		case "send":
@@ -91,7 +91,7 @@ func main() {
 
 	case "task":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra task <create|edit|delete|move|list|status|start|done|block|unblock>")
+			fatal("usage: tomy task <create|edit|delete|move|list|status|start|done|block|unblock>")
 		}
 		switch os.Args[2] {
 		case "create":
@@ -120,7 +120,7 @@ func main() {
 
 	case "plan":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra plan <create|edit|list|show|assign>")
+			fatal("usage: tomy plan <create|edit|list|show|assign>")
 		}
 		switch os.Args[2] {
 		case "create":
@@ -139,7 +139,7 @@ func main() {
 
 	case "project":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra project <create|list|set|status>")
+			fatal("usage: tomy project <create|list|set|status>")
 		}
 		switch os.Args[2] {
 		case "create":
@@ -156,7 +156,7 @@ func main() {
 
 	case "repo":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra repo <add|list|remove|setup>")
+			fatal("usage: tomy repo <add|list|remove|setup>")
 		}
 		switch os.Args[2] {
 		case "add":
@@ -173,7 +173,7 @@ func main() {
 
 	case "planner":
 		if len(os.Args) < 3 {
-			fatal("usage: orchestra planner <start|stop|attach>")
+			fatal("usage: tomy planner <start|stop|attach>")
 		}
 		switch os.Args[2] {
 		case "start":
@@ -207,82 +207,82 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`orchestra - multi-agent Claude Code orchestrator (v1)
+	fmt.Println(`tomy - multi-agent Claude Code tomytor (v1)
 
 Usage:
-  orchestra project create <name>                        Create a new project
-  orchestra project list                                 List all projects
-  orchestra project set <name>                           Set active project
-  orchestra project status                               Show active project details
+  tomy project create <name>                        Create a new project
+  tomy project list                                 List all projects
+  tomy project set <name>                           Set active project
+  tomy project status                               Show active project details
 
-  orchestra repo add <path> [--name <n>] [--setup <cmd>] Add a repo to active project
-  orchestra repo list                                    List repos in active project
-  orchestra repo remove <name>                           Remove a repo
-  orchestra repo setup <name> --cmd <command>             Set/update post-worktree setup command
-  orchestra repo setup <name>                            Show current setup command
+  tomy repo add <path> [--name <n>] [--setup <cmd>] Add a repo to active project
+  tomy repo list                                    List repos in active project
+  tomy repo remove <name>                           Remove a repo
+  tomy repo setup <name> --cmd <command>             Set/update post-worktree setup command
+  tomy repo setup <name>                            Show current setup command
 
-  orchestra plan create --name "..." [--desc "..."]       Create a plan
-  orchestra plan edit <plan-id> --name "..."             Rename a plan
-  orchestra plan list                                    List all plans with progress
-  orchestra plan show <plan-id>                          Show plan tasks with completion percentage
-  orchestra plan assign <plan-id> <worker-name>          Assign plan to a worker
+  tomy plan create --name "..." [--desc "..."]       Create a plan
+  tomy plan edit <plan-id> --name "..."             Rename a plan
+  tomy plan list                                    List all plans with progress
+  tomy plan show <plan-id>                          Show plan tasks with completion percentage
+  tomy plan assign <plan-id> <worker-name>          Assign plan to a worker
 
-  orchestra planner start                                Select project + spawn planner (interactive)
-  orchestra planner stop                                 Kill the planner session
-  orchestra planner attach                               Attach to planner's session
+  tomy planner start                                Select project + spawn planner (interactive)
+  tomy planner stop                                 Kill the planner session
+  tomy planner attach                               Attach to planner's session
 
-  orchestra worker spawn <name>                          Spawn a worker (worktrees + run setup commands)
-  orchestra worker list                                  List all workers with plan progress
-  orchestra worker peek <name>                           See what a worker is doing right now
-  orchestra worker kill <name>                           Kill a worker
-  orchestra worker attach <name>                         Attach to worker's session
+  tomy worker spawn <name>                          Spawn a worker (worktrees + run setup commands)
+  tomy worker list                                  List all workers with plan progress
+  tomy worker peek <name>                           See what a worker is doing right now
+  tomy worker kill <name>                           Kill a worker
+  tomy worker attach <name>                         Attach to worker's session
 
-  orchestra msg send <to> <message> --from <name>        Send a message (idle: direct, busy: queued)
-  orchestra msg inbox <name>                             Read unread messages
-  orchestra msg inbox <name> --inject                    Drain nudge queue as system-reminder (for hooks)
+  tomy msg send <to> <message> --from <name>        Send a message (idle: direct, busy: queued)
+  tomy msg inbox <name>                             Read unread messages
+  tomy msg inbox <name> --inject                    Drain nudge queue as system-reminder (for hooks)
 
-  orchestra task create --plan <id> --title "..." --desc "..."  Create a task under a plan
-  orchestra task edit <task-id> --title "..." --desc "..."      Edit a task's title or description
-  orchestra task delete <task-id>                               Remove a task
-  orchestra task move <task-id> --before <task-id>              Reorder a task within a plan
-  orchestra task list                                           List all tasks
-  orchestra task status <task-id>                               Show task details
-  orchestra task start <task-id>                                Mark a task as in-progress
-  orchestra task done <task-id>                                 Mark a task as done
-  orchestra task block <task-id> --reason "..."                 Mark a task as blocked
-  orchestra task unblock <task-id>                              Unblock a task (back to in-progress)
+  tomy task create --plan <id> --title "..." --desc "..."  Create a task under a plan
+  tomy task edit <task-id> --title "..." --desc "..."      Edit a task's title or description
+  tomy task delete <task-id>                               Remove a task
+  tomy task move <task-id> --before <task-id>              Reorder a task within a plan
+  tomy task list                                           List all tasks
+  tomy task status <task-id>                               Show task details
+  tomy task start <task-id>                                Mark a task as in-progress
+  tomy task done <task-id>                                 Mark a task as done
+  tomy task block <task-id> --reason "..."                 Mark a task as blocked
+  tomy task unblock <task-id>                              Unblock a task (back to in-progress)
 
-  orchestra done <worker-name>                           Mark worker and all plan tasks as done
+  tomy done <worker-name>                           Mark worker and all plan tasks as done
 
-  orchestra run --name "..." --title "..." --desc "..."  Create plan + task + spawn + assign (all-in-one)
+  tomy run --name "..." --title "..." --desc "..."  Create plan + task + spawn + assign (all-in-one)
 
-  orchestra monitor [--interval <seconds>]               Live dashboard of plans and tasks
+  tomy monitor [--interval <seconds>]               Live dashboard of plans and tasks
 
-  orchestra completion <zsh|bash>                        Output shell completion script
+  tomy completion <zsh|bash>                        Output shell completion script
 
 Worktree Setup:
   Git worktrees don't include gitignored files (.env, configs). Attach a setup
   command to a repo and it runs automatically in each new worktree after spawn.
 
-  orchestra repo add ./api --setup 'cp "$ORCH_REPO_PATH/.env" .'
-  orchestra repo setup api --cmd 'docker compose -p "api-$ORCH_WORKER_NAME" up -d'
+  tomy repo add ./api --setup 'cp "$TOMY_REPO_PATH/.env" .'
+  tomy repo setup api --cmd 'docker compose -p "api-$TOMY_WORKER_NAME" up -d'
 
   Setup commands run via "sh -c" with a 60s timeout. Failures warn but don't
   block worker creation. The following env vars are available:
 
-    ORCH_WORKTREE_PATH   Absolute path to the created worktree
-    ORCH_REPO_PATH       Absolute path to the original repo
-    ORCH_REPO_NAME       Name of the repo
-    ORCH_WORKER_NAME     Name of the worker
-    ORCH_WORKER_INDEX    0-based index (for port offsetting)
-    ORCH_WORKSPACE_DIR   Worker's workspace root directory`)
+    TOMY_WORKTREE_PATH   Absolute path to the created worktree
+    TOMY_REPO_PATH       Absolute path to the original repo
+    TOMY_REPO_NAME       Name of the repo
+    TOMY_WORKER_NAME     Name of the worker
+    TOMY_WORKER_INDEX    0-based index (for port offsetting)
+    TOMY_WORKSPACE_DIR   Worker's workspace root directory`)
 }
 
 // --- Project commands ---
 
 func cmdProjectCreate(args []string, store *project.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra project create <name>")
+		fatal("usage: tomy project create <name>")
 	}
 	p, err := store.Create(args[0])
 	if err != nil {
@@ -317,7 +317,7 @@ func cmdProjectList(store *project.Store) {
 
 func cmdProjectSet(args []string, store *project.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra project set <name-or-id>")
+		fatal("usage: tomy project set <name-or-id>")
 	}
 	p, err := store.Get(args[0])
 	if err != nil {
@@ -332,7 +332,7 @@ func cmdProjectSet(args []string, store *project.Store) {
 func cmdProjectStatus(store *project.Store, mgr *worker.Manager) {
 	proj, _ := store.GetActive()
 	if proj == nil {
-		fmt.Println("No active project. Create one with: orchestra project create <name>")
+		fmt.Println("No active project. Create one with: tomy project create <name>")
 		return
 	}
 
@@ -360,7 +360,7 @@ func cmdProjectStatus(store *project.Store, mgr *worker.Manager) {
 
 func requireActiveProject(proj *project.Project) {
 	if proj == nil {
-		fatal("no active project. Create one with: orchestra project create <name>")
+		fatal("no active project. Create one with: tomy project create <name>")
 	}
 }
 
@@ -373,7 +373,7 @@ func cmdRepoAdd(args []string, store *project.Store, proj *project.Project) {
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fatal("usage: orchestra repo add <path> [--name <name>] [--setup <command>]")
+		fatal("usage: tomy repo add <path> [--name <name>] [--setup <command>]")
 	}
 	path := fs.Arg(0)
 
@@ -401,7 +401,7 @@ func cmdRepoList(proj *project.Project) {
 	requireActiveProject(proj)
 
 	if len(proj.Repos) == 0 {
-		fmt.Println("No repos in project. Add one with: orchestra repo add <path>")
+		fmt.Println("No repos in project. Add one with: tomy repo add <path>")
 		return
 	}
 
@@ -446,7 +446,7 @@ func cmdRepoSetup(args []string, store *project.Store, proj *project.Project) {
 	fs.Parse(append(flagArgs, posArgs...))
 
 	if fs.NArg() < 1 {
-		fatal("usage: orchestra repo setup <repo-name> --cmd <command>")
+		fatal("usage: tomy repo setup <repo-name> --cmd <command>")
 	}
 	repoName := fs.Arg(0)
 
@@ -485,7 +485,7 @@ func cmdRepoRemove(args []string, store *project.Store, proj *project.Project) {
 	requireActiveProject(proj)
 
 	if len(args) < 1 {
-		fatal("usage: orchestra repo remove <name>")
+		fatal("usage: tomy repo remove <name>")
 	}
 	if err := store.RemoveRepo(proj.ID, args[0]); err != nil {
 		fatal(err.Error())
@@ -525,7 +525,7 @@ func cmdPlanCreate(args []string, store *plan.Store) {
 
 	fmt.Printf("Created plan %s: %s\n", p.ID, p.Name)
 	fmt.Printf("  file: %s\n", p.ContentFile)
-	fmt.Printf("\nAdd tasks: orchestra task create --plan %s --title \"...\"\n", p.ID)
+	fmt.Printf("\nAdd tasks: tomy task create --plan %s --title \"...\"\n", p.ID)
 }
 
 func cmdPlanEdit(args []string, store *plan.Store) {
@@ -547,7 +547,7 @@ func cmdPlanEdit(args []string, store *plan.Store) {
 	fs.Parse(append(flagArgs, posArgs...))
 
 	if fs.NArg() < 1 {
-		fatal("usage: orchestra plan edit <plan-id> --name \"...\"")
+		fatal("usage: tomy plan edit <plan-id> --name \"...\"")
 	}
 	planID := fs.Arg(0)
 
@@ -598,7 +598,7 @@ func cmdPlanList(store *plan.Store, tasks *task.Store) {
 
 func cmdPlanShow(args []string, store *plan.Store, tasks *task.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra plan show <plan-id>")
+		fatal("usage: tomy plan show <plan-id>")
 	}
 	planID := args[0]
 
@@ -650,7 +650,7 @@ func cmdPlanShow(args []string, store *plan.Store, tasks *task.Store) {
 
 func cmdPlanAssign(args []string, store *plan.Store, tasks *task.Store, mgr *worker.Manager) {
 	if len(args) < 2 {
-		fatal("usage: orchestra plan assign <plan-id> <worker-name>")
+		fatal("usage: tomy plan assign <plan-id> <worker-name>")
 	}
 	planID := args[0]
 	workerName := args[1]
@@ -674,7 +674,7 @@ func cmdPlanAssign(args []string, store *plan.Store, tasks *task.Store, mgr *wor
 	// Build the plan content file with all tasks
 	planTasks, _ := tasks.ListByPlan(planID)
 	if len(planTasks) == 0 {
-		fatal("plan has no tasks — add tasks first with: orchestra task create --plan " + planID + " --title \"...\"")
+		fatal("plan has no tasks — add tasks first with: tomy task create --plan " + planID + " --title \"...\"")
 	}
 
 	prompt := buildPlanPrompt(p, planTasks, workerName)
@@ -717,7 +717,7 @@ func cmdPlannerStart(mgr *worker.Manager, projStore *project.Store, plannerDir s
 		fatal(err.Error())
 	}
 	if len(projects) == 0 {
-		fatal("no projects. Create one with: orchestra project create <name>")
+		fatal("no projects. Create one with: tomy project create <name>")
 	}
 
 	var proj *project.Project
@@ -765,7 +765,7 @@ func cmdPlannerAttach(mgr *worker.Manager) {
 
 func cmdWorkerSpawn(args []string, mgr *worker.Manager, proj *project.Project) {
 	if len(args) < 1 {
-		fatal("usage: orchestra worker spawn <name>")
+		fatal("usage: tomy worker spawn <name>")
 	}
 	name := args[0]
 
@@ -821,7 +821,7 @@ func cmdWorkerList(mgr *worker.Manager, plans *plan.Store, tasks *task.Store) {
 
 func cmdWorkerKill(args []string, mgr *worker.Manager) {
 	if len(args) < 1 {
-		fatal("usage: orchestra worker kill <name>")
+		fatal("usage: tomy worker kill <name>")
 	}
 	if err := mgr.Kill(args[0]); err != nil {
 		fatal(err.Error())
@@ -831,7 +831,7 @@ func cmdWorkerKill(args []string, mgr *worker.Manager) {
 
 func cmdWorkerAttach(args []string, mgr *worker.Manager) {
 	if len(args) < 1 {
-		fatal("usage: orchestra worker attach <name>")
+		fatal("usage: tomy worker attach <name>")
 	}
 	if err := mgr.Attach(args[0]); err != nil {
 		fatal(err.Error())
@@ -840,7 +840,7 @@ func cmdWorkerAttach(args []string, mgr *worker.Manager) {
 
 func cmdWorkerPeek(args []string, mgr *worker.Manager) {
 	if len(args) < 1 {
-		fatal("usage: orchestra worker peek <name>")
+		fatal("usage: tomy worker peek <name>")
 	}
 	name := args[0]
 
@@ -881,7 +881,7 @@ func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager, nq *nudge.
 	fs.Parse(append(flagArgs, posArgs...))
 
 	if fs.NArg() < 2 {
-		fatal("usage: orchestra msg send <to> <message> --from <name>")
+		fatal("usage: tomy msg send <to> <message> --from <name>")
 	}
 	to := fs.Arg(0)
 	content := strings.Join(fs.Args()[1:], " ")
@@ -901,7 +901,7 @@ func cmdMsgSend(args []string, store *msg.Store, mgr *worker.Manager, nq *nudge.
 
 	// If the session is idle, deliver directly via send-keys
 	if tmux.IsIdle(session, 3*time.Second) {
-		notification := fmt.Sprintf("You have a new message from %s. Run: orchestra msg inbox %s", *from, to)
+		notification := fmt.Sprintf("You have a new message from %s. Run: tomy msg inbox %s", *from, to)
 		tmux.SendKeys(session, notification)
 		fmt.Printf("Delivered directly (session was idle).\n")
 		return
@@ -934,7 +934,7 @@ func cmdMsgInbox(args []string, store *msg.Store, nq *nudge.Queue) {
 	fs.Parse(append(flagArgs, posArgs...))
 
 	if fs.NArg() < 1 {
-		fatal("usage: orchestra msg inbox <name> [--inject]")
+		fatal("usage: tomy msg inbox <name> [--inject]")
 	}
 	name := fs.Arg(0)
 
@@ -1023,7 +1023,7 @@ func cmdTaskEdit(args []string, store *task.Store) {
 	fs.Parse(append(flagArgs, posArgs...))
 
 	if fs.NArg() < 1 {
-		fatal("usage: orchestra task edit <task-id> [--title \"...\"] [--desc \"...\"]")
+		fatal("usage: tomy task edit <task-id> [--title \"...\"] [--desc \"...\"]")
 	}
 	taskID := fs.Arg(0)
 
@@ -1048,7 +1048,7 @@ func cmdTaskEdit(args []string, store *task.Store) {
 
 func cmdTaskDelete(args []string, store *task.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra task delete <task-id>")
+		fatal("usage: tomy task delete <task-id>")
 	}
 	taskID := args[0]
 
@@ -1082,7 +1082,7 @@ func cmdTaskMove(args []string, store *task.Store) {
 	fs.Parse(append(flagArgs, posArgs...))
 
 	if fs.NArg() < 1 {
-		fatal("usage: orchestra task move <task-id> --before <target-task-id>")
+		fatal("usage: tomy task move <task-id> --before <target-task-id>")
 	}
 	taskID := fs.Arg(0)
 
@@ -1121,7 +1121,7 @@ func cmdTaskList(store *task.Store) {
 
 func cmdTaskStatus(args []string, store *task.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra task status <task-id>")
+		fatal("usage: tomy task status <task-id>")
 	}
 
 	t, err := store.Get(args[0])
@@ -1148,7 +1148,7 @@ func cmdTaskStatus(args []string, store *task.Store) {
 
 func cmdTaskStart(args []string, store *task.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra task start <task-id>")
+		fatal("usage: tomy task start <task-id>")
 	}
 	taskID := args[0]
 
@@ -1181,7 +1181,7 @@ func cmdTaskBlock(args []string, store *task.Store) {
 	remaining := fs.Args()
 
 	if len(remaining) < 1 {
-		fatal("usage: orchestra task block <task-id> --reason \"...\"")
+		fatal("usage: tomy task block <task-id> --reason \"...\"")
 	}
 	if *reason == "" {
 		fatal("--reason is required")
@@ -1205,7 +1205,7 @@ func cmdTaskBlock(args []string, store *task.Store) {
 
 func cmdTaskUnblock(args []string, store *task.Store) {
 	if len(args) < 1 {
-		fatal("usage: orchestra task unblock <task-id>")
+		fatal("usage: tomy task unblock <task-id>")
 	}
 	taskID := args[0]
 
@@ -1226,7 +1226,7 @@ func cmdTaskUnblock(args []string, store *task.Store) {
 
 func cmdTaskDone(args []string, store *task.Store, plans *plan.Store, mgr *worker.Manager, inbox *msg.Store, nq *nudge.Queue) {
 	if len(args) < 1 {
-		fatal("usage: orchestra task done <task-id>")
+		fatal("usage: tomy task done <task-id>")
 	}
 	taskID := args[0]
 
@@ -1375,14 +1375,14 @@ func cmdRun(args []string, plans *plan.Store, tasks *task.Store, mgr *worker.Man
 	})
 
 	fmt.Printf("Assigned plan %q to worker %s\n", p.Name, wName)
-	fmt.Printf("\nAttach with: orchestra worker attach %s\n", wName)
+	fmt.Printf("\nAttach with: tomy worker attach %s\n", wName)
 }
 
 // --- Done command ---
 
 func cmdDone(args []string, plans *plan.Store, store *task.Store, mgr *worker.Manager, inbox *msg.Store, nq *nudge.Queue) {
 	if len(args) < 1 {
-		fatal("usage: orchestra done <worker-name>")
+		fatal("usage: tomy done <worker-name>")
 	}
 	workerName := args[0]
 
@@ -1453,11 +1453,11 @@ func buildPlanPrompt(p *plan.Plan, planTasks []task.Task, workerName string) str
 			b.WriteString(t.Description)
 			b.WriteString("\n\n")
 		}
-		b.WriteString(fmt.Sprintf("When done: `orchestra task done %s`\n\n", t.ID))
+		b.WriteString(fmt.Sprintf("When done: `tomy task done %s`\n\n", t.ID))
 	}
 	b.WriteString("---\n")
 	b.WriteString("Follow your CLAUDE.md for completion and communication instructions.\n")
-	b.WriteString(fmt.Sprintf("When all tasks are done: `orchestra done %s`\n", workerName))
+	b.WriteString(fmt.Sprintf("When all tasks are done: `tomy done %s`\n", workerName))
 	return b.String()
 }
 
@@ -1467,7 +1467,7 @@ func notifyPlanner(mgr *worker.Manager, nq *nudge.Queue, fromWorker, notificatio
 		return
 	}
 	if tmux.IsIdle(session, 3*time.Second) {
-		hint := fmt.Sprintf("Worker %s is done. Run: orchestra msg inbox planner", fromWorker)
+		hint := fmt.Sprintf("Worker %s is done. Run: tomy msg inbox planner", fromWorker)
 		tmux.SendKeys(session, hint)
 		fmt.Printf("Delivered directly (planner was idle).\n")
 		return
@@ -1633,7 +1633,7 @@ func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.St
 		return
 	}
 
-	fmt.Fprintf(b, "%sorchestra monitor%s  (every %ds, Ctrl+C to exit)\n", colorBold, colorReset, interval)
+	fmt.Fprintf(b, "%stomy monitor%s  (every %ds, Ctrl+C to exit)\n", colorBold, colorReset, interval)
 	b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	if len(allPlans) == 0 {

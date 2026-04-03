@@ -4,7 +4,7 @@ import "fmt"
 
 func cmdCompletion(args []string) {
 	if len(args) < 1 {
-		fatal("usage: orchestra completion <zsh|bash>")
+		fatal("usage: tomy completion <zsh|bash>")
 	}
 	switch args[0] {
 	case "zsh":
@@ -16,39 +16,39 @@ func cmdCompletion(args []string) {
 	}
 }
 
-const zshCompletion = `#compdef orchestra
+const zshCompletion = `#compdef tomy
 
-_orchestra_workers() {
+_tomy_workers() {
   local -a workers
-  workers=(${(f)"$(orchestra worker list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
+  workers=(${(f)"$(tomy worker list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
   _describe 'worker' workers
 }
 
-_orchestra_projects() {
+_tomy_projects() {
   local -a projects
-  projects=(${(f)"$(orchestra project list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
+  projects=(${(f)"$(tomy project list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
   _describe 'project' projects
 }
 
-_orchestra_plans() {
+_tomy_plans() {
   local -a plans
-  plans=(${(f)"$(orchestra plan list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
+  plans=(${(f)"$(tomy plan list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
   _describe 'plan' plans
 }
 
-_orchestra_tasks() {
+_tomy_tasks() {
   local -a tasks
-  tasks=(${(f)"$(orchestra task list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
+  tasks=(${(f)"$(tomy task list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
   _describe 'task' tasks
 }
 
-_orchestra_repos() {
+_tomy_repos() {
   local -a repos
-  repos=(${(f)"$(orchestra repo list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
+  repos=(${(f)"$(tomy repo list 2>/dev/null | tail -n +2 | awk '{print $1}')"})
   _describe 'repo' repos
 }
 
-_orchestra() {
+_tomy() {
   local -a commands
   commands=(
     'project:Manage projects'
@@ -84,7 +84,7 @@ _orchestra() {
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                set) _orchestra_projects ;;
+                set) _tomy_projects ;;
               esac
               ;;
           esac
@@ -97,7 +97,7 @@ _orchestra() {
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                remove|setup) _orchestra_repos ;;
+                remove|setup) _tomy_repos ;;
                 add) _files -/ ;;
               esac
               ;;
@@ -111,9 +111,9 @@ _orchestra() {
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                show) _orchestra_plans ;;
+                show) _tomy_plans ;;
                 assign)
-                  _arguments '1: :_orchestra_plans' '2: :_orchestra_workers'
+                  _arguments '1: :_tomy_plans' '2: :_tomy_workers'
                   ;;
               esac
               ;;
@@ -132,7 +132,7 @@ _orchestra() {
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                kill|attach|peek) _orchestra_workers ;;
+                kill|attach|peek) _tomy_workers ;;
               esac
               ;;
           esac
@@ -145,7 +145,7 @@ _orchestra() {
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                send|inbox) _orchestra_workers ;;
+                send|inbox) _tomy_workers ;;
               esac
               ;;
           esac
@@ -158,13 +158,13 @@ _orchestra() {
             subcmd) _describe 'subcommand' subcmds ;;
             subargs)
               case $words[1] in
-                status|done|block|unblock) _orchestra_tasks ;;
+                status|done|block|unblock) _tomy_tasks ;;
               esac
               ;;
           esac
           ;;
         done)
-          _orchestra_workers
+          _tomy_workers
           ;;
         completion)
           _describe 'shell' '(zsh bash)'
@@ -174,30 +174,30 @@ _orchestra() {
   esac
 }
 
-compdef _orchestra orchestra
+compdef _tomy tomy
 `
 
-const bashCompletion = `_orchestra_workers() {
-  orchestra worker list 2>/dev/null | tail -n +2 | awk '{print $1}'
+const bashCompletion = `_tomy_workers() {
+  tomy worker list 2>/dev/null | tail -n +2 | awk '{print $1}'
 }
 
-_orchestra_projects() {
-  orchestra project list 2>/dev/null | tail -n +2 | awk '{print $1}'
+_tomy_projects() {
+  tomy project list 2>/dev/null | tail -n +2 | awk '{print $1}'
 }
 
-_orchestra_plans() {
-  orchestra plan list 2>/dev/null | tail -n +2 | awk '{print $1}'
+_tomy_plans() {
+  tomy plan list 2>/dev/null | tail -n +2 | awk '{print $1}'
 }
 
-_orchestra_tasks() {
-  orchestra task list 2>/dev/null | tail -n +2 | awk '{print $1}'
+_tomy_tasks() {
+  tomy task list 2>/dev/null | tail -n +2 | awk '{print $1}'
 }
 
-_orchestra_repos() {
-  orchestra repo list 2>/dev/null | tail -n +2 | awk '{print $1}'
+_tomy_repos() {
+  tomy repo list 2>/dev/null | tail -n +2 | awk '{print $1}'
 }
 
-_orchestra() {
+_tomy() {
   local cur prev words cword
   _init_completion || return
 
@@ -217,7 +217,7 @@ _orchestra() {
         COMPREPLY=($(compgen -W "create list set status" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          set) COMPREPLY=($(compgen -W "$(_orchestra_projects)" -- "$cur")) ;;
+          set) COMPREPLY=($(compgen -W "$(_tomy_projects)" -- "$cur")) ;;
         esac
       fi
       ;;
@@ -226,7 +226,7 @@ _orchestra() {
         COMPREPLY=($(compgen -W "add list remove setup" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          remove|setup) COMPREPLY=($(compgen -W "$(_orchestra_repos)" -- "$cur")) ;;
+          remove|setup) COMPREPLY=($(compgen -W "$(_tomy_repos)" -- "$cur")) ;;
           add) COMPREPLY=($(compgen -d -- "$cur")) ;;
         esac
       fi
@@ -236,11 +236,11 @@ _orchestra() {
         COMPREPLY=($(compgen -W "create list show assign" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          show|assign) COMPREPLY=($(compgen -W "$(_orchestra_plans)" -- "$cur")) ;;
+          show|assign) COMPREPLY=($(compgen -W "$(_tomy_plans)" -- "$cur")) ;;
         esac
       elif [[ $cword -eq 4 ]]; then
         case "$subcmd" in
-          assign) COMPREPLY=($(compgen -W "$(_orchestra_workers)" -- "$cur")) ;;
+          assign) COMPREPLY=($(compgen -W "$(_tomy_workers)" -- "$cur")) ;;
         esac
       fi
       ;;
@@ -254,7 +254,7 @@ _orchestra() {
         COMPREPLY=($(compgen -W "spawn list kill attach peek" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          kill|attach|peek) COMPREPLY=($(compgen -W "$(_orchestra_workers)" -- "$cur")) ;;
+          kill|attach|peek) COMPREPLY=($(compgen -W "$(_tomy_workers)" -- "$cur")) ;;
         esac
       fi
       ;;
@@ -263,7 +263,7 @@ _orchestra() {
         COMPREPLY=($(compgen -W "send inbox" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          send|inbox) COMPREPLY=($(compgen -W "$(_orchestra_workers)" -- "$cur")) ;;
+          send|inbox) COMPREPLY=($(compgen -W "$(_tomy_workers)" -- "$cur")) ;;
         esac
       fi
       ;;
@@ -272,13 +272,13 @@ _orchestra() {
         COMPREPLY=($(compgen -W "create list status done block unblock" -- "$cur"))
       elif [[ $cword -eq 3 ]]; then
         case "$subcmd" in
-          status|done|block|unblock) COMPREPLY=($(compgen -W "$(_orchestra_tasks)" -- "$cur")) ;;
+          status|done|block|unblock) COMPREPLY=($(compgen -W "$(_tomy_tasks)" -- "$cur")) ;;
         esac
       fi
       ;;
     done)
       if [[ $cword -eq 2 ]]; then
-        COMPREPLY=($(compgen -W "$(_orchestra_workers)" -- "$cur"))
+        COMPREPLY=($(compgen -W "$(_tomy_workers)" -- "$cur"))
       fi
       ;;
     completion)
@@ -289,5 +289,5 @@ _orchestra() {
   esac
 }
 
-complete -F _orchestra orchestra
+complete -F _tomy tomy
 `

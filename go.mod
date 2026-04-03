@@ -1,3 +1,3 @@
-module github.com/orchestra/v1
+module github.com/tomy/v1
 
 go 1.22

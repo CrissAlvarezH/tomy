@@ -1,9 +1,9 @@
-BINARY    := orchestra
+BINARY    := tomy
 CMD_DIR   := ./cmd
 BUILD_DIR := ./build
-ORCH_HOME := $(HOME)/.orchestra
-STATE_DIR := $(ORCH_HOME)/state
-WORK_DIR  := $(ORCH_HOME)/workspaces
+TOMY_HOME := $(HOME)/.tomy
+STATE_DIR := $(TOMY_HOME)/state
+WORK_DIR  := $(TOMY_HOME)/workspaces
 
 GO       := go
 GOFLAGS  :=
@@ -12,7 +12,7 @@ GOFLAGS  :=
 
 ## ---- Build ----
 
-build: ## Build the orchestra binary
+build: ## Build the tomy binary
 	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/$(BINARY) $(CMD_DIR)
 
 run: build ## Build and run (pass ARGS, e.g. make run ARGS="worker list")
@@ -27,8 +27,8 @@ install: build install-completion ## Copy binary to ~/.local/bin + install compl
 	@echo "  Make sure \033[1m~/.local/bin\033[0m is in your PATH."
 	@echo "  Restart your shell or run:"
 	@echo ""
-	@echo "    \033[36meval \"\$$(orchestra completion zsh)\"\033[0m   (zsh)"
-	@echo "    \033[36meval \"\$$(orchestra completion bash)\"\033[0m  (bash)"
+	@echo "    \033[36meval \"\$$(tomy completion zsh)\"\033[0m   (zsh)"
+	@echo "    \033[36meval \"\$$(tomy completion bash)\"\033[0m  (bash)"
 	@echo ""
 
 install-completion: build ## Install shell completion for zsh and bash
@@ -65,12 +65,12 @@ check: fmt vet test ## Run fmt + vet + test
 clean: ## Remove build artifacts
 	rm -rf $(BUILD_DIR)
 
-reset: ## Wipe state files (~/.orchestra/state/) — does NOT kill tmux sessions
+reset: ## Wipe state files (~/.tomy/state/) — does NOT kill tmux sessions
 	rm -f $(STATE_DIR)/workers.json $(STATE_DIR)/tasks.json
 	@echo "State files cleared."
 
-nuke: kill-all ## Kill all sessions + wipe ~/.orchestra entirely
-	rm -rf $(ORCH_HOME)
+nuke: kill-all ## Kill all sessions + wipe ~/.tomy entirely
+	rm -rf $(TOMY_HOME)
 	@echo "Everything wiped clean."
 
 ## ---- Worker shortcuts ----
@@ -81,12 +81,12 @@ workers: build ## List all workers
 tasks: build ## List all tasks
 	$(BUILD_DIR)/$(BINARY) task list
 
-kill-all: ## Kill all orchestra tmux sessions
+kill-all: ## Kill all tomy tmux sessions
 	@tmux list-sessions -F '#{session_name}' 2>/dev/null \
-		| grep '^orch-' \
+		| grep '^tomy-' \
 		| while read s; do \
 			tmux kill-session -t "$$s" && echo "Killed $$s"; \
-		done || echo "No orchestra sessions running."
+		done || echo "No tomy sessions running."
 
 ## ---- Help ----
 

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/orchestra/v1/internal/git"
-	"github.com/orchestra/v1/internal/state"
+	"github.com/tomy/v1/internal/git"
+	"github.com/tomy/v1/internal/state"
 )
 
 type Store struct {

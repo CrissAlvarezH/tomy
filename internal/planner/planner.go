@@ -5,17 +5,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/orchestra/v1/internal/project"
-	"github.com/orchestra/v1/internal/tmux"
-	"github.com/orchestra/v1/internal/worker"
+	"github.com/tomy/v1/internal/project"
+	"github.com/tomy/v1/internal/tmux"
+	"github.com/tomy/v1/internal/worker"
 )
 
 const PlannerName = "planner"
 
 // Start spawns the planner session for the given project and attaches to it.
-// plannerBaseDir is ~/.orchestra/planner/
+// plannerBaseDir is ~/.tomy/planner/
 func Start(mgr *worker.Manager, proj *project.Project, plannerBaseDir string) error {
-	// Planner lives in its own directory: ~/.orchestra/planner/<project>/
+	// Planner lives in its own directory: ~/.tomy/planner/<project>/
 	workDir := filepath.Join(plannerBaseDir, proj.Name)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return fmt.Errorf("create planner dir: %w", err)
@@ -47,7 +47,7 @@ func Start(mgr *worker.Manager, proj *project.Project, plannerBaseDir string) er
         "hooks": [
           {
             "type": "command",
-            "command": "orchestra msg inbox %s --inject"
+            "command": "tomy msg inbox %s --inject"
           }
         ]
       }

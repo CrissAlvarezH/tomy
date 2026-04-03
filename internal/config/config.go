@@ -5,28 +5,28 @@ import (
 	"path/filepath"
 )
 
-// Default home: ~/.orchestra
-// Override with ORCHESTRA_HOME env var.
+// Default home: ~/.tomy
+// Override with TOMY_HOME env var.
 
 type Config struct {
-	HomeDir       string // ~/.orchestra (or $ORCHESTRA_HOME)
-	StateDir      string // ~/.orchestra/state
-	WorkspacesDir string // ~/.orchestra/workspaces
-	PlannerDir    string // ~/.orchestra/planner
-	InboxDir      string // ~/.orchestra/state/inbox
-	PlansDir      string // ~/.orchestra/state/plans
-	NudgeQueueDir string // ~/.orchestra/state/nudge_queue
+	HomeDir       string // ~/.tomy (or $TOMY_HOME)
+	StateDir      string // ~/.tomy/state
+	WorkspacesDir string // ~/.tomy/workspaces
+	PlannerDir    string // ~/.tomy/planner
+	InboxDir      string // ~/.tomy/state/inbox
+	PlansDir      string // ~/.tomy/state/plans
+	NudgeQueueDir string // ~/.tomy/state/nudge_queue
 	SessionPrefix string // tmux session name prefix
 }
 
 func Load() (*Config, error) {
-	home := os.Getenv("ORCHESTRA_HOME")
+	home := os.Getenv("TOMY_HOME")
 	if home == "" {
 		userHome, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err
 		}
-		home = filepath.Join(userHome, ".orchestra")
+		home = filepath.Join(userHome, ".tomy")
 	}
 
 	stateDir := filepath.Join(home, "state")
@@ -38,7 +38,7 @@ func Load() (*Config, error) {
 		InboxDir:      filepath.Join(stateDir, "inbox"),
 		PlansDir:      filepath.Join(stateDir, "plans"),
 		NudgeQueueDir: filepath.Join(stateDir, "nudge_queue"),
-		SessionPrefix: "orch",
+		SessionPrefix: "tomy",
 	}
 
 	// Ensure directories exist

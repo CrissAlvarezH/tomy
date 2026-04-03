@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development
 
 ```bash
-make build          # Compile to ./build/orchestra
+make build          # Compile to ./build/tomy
 make test           # go test ./... -v
 make check          # fmt + vet + test (run before committing)
-make install        # Copy binary to ~/.local/bin/orchestra
+make install        # Copy binary to ~/.local/bin/tomy
 make fmt            # gofmt
 make vet            # go vet
 ```
@@ -16,28 +16,28 @@ make vet            # go vet
 Useful during development:
 ```bash
 make reset          # Wipe state files (keeps sessions alive)
-make nuke           # Kill all tmux sessions + wipe ~/.orchestra
-make workers        # Quick alias for orchestra worker list
-make tasks          # Quick alias for orchestra task list
-make kill-all       # Kill all orchestra tmux sessions
+make nuke           # Kill all tmux sessions + wipe ~/.tomy
+make workers        # Quick alias for tomy worker list
+make tasks          # Quick alias for tomy task list
+make kill-all       # Kill all tomy tmux sessions
 ```
 
 Run a single test: `go test ./internal/tmux/ -run TestIsIdle -v`
 
 ## Architecture
 
-Tmux-based multi-agent orchestrator for Claude Code. A **planner** session coordinates **worker** sessions, each running Claude Code in isolated git worktrees. Zero external dependencies (Go stdlib only).
+Tmux-based multi-agent tomytor for Claude Code. A **planner** session coordinates **worker** sessions, each running Claude Code in isolated git worktrees. Zero external dependencies (Go stdlib only).
 
 ### Key flow
 1. User creates a **project** and adds **repos** to it
-2. `orchestra planner start` spawns a Claude Code session with a system prompt (CLAUDE.md) listing available commands
-3. Planner creates **tasks**, spawns **workers** (each gets worktrees for all project repos on branch `orch/<worker-name>`), and assigns tasks
+2. `tomy planner start` spawns a Claude Code session with a system prompt (CLAUDE.md) listing available commands
+3. Planner creates **tasks**, spawns **workers** (each gets worktrees for all project repos on branch `tomy/<worker-name>`), and assigns tasks
 4. Workers execute plans, communicate back via **messages**
-5. `orchestra done <worker>` marks completion
+5. `tomy done <worker>` marks completion
 
 ### Packages (`internal/`)
 
-- **config** — Resolves `~/.orchestra` directory layout (`ORCHESTRA_HOME` overrides)
+- **config** — Resolves `~/.tomy` directory layout (`TOMY_HOME` overrides)
 - **state** — JSON persistence with `syscall.Flock` for concurrent access. All stores use this.
 - **project** — Project/repo CRUD, active project tracking
 - **worker** — Worker lifecycle: spawn (creates worktrees + tmux session + CLAUDE.md + hooks), kill (cleanup worktrees), list, attach, assign
@@ -52,7 +52,7 @@ Tmux-based multi-agent orchestrator for Claude Code. A **planner** session coord
 
 `msg send` detects if the recipient's tmux session is idle (prompt visible, no "esc to interrupt"). If idle, delivers via `tmux send-keys`. If busy, enqueues a nudge to disk. A `UserPromptSubmit` hook (written to `.claude/settings.json` at spawn time) drains the queue at each turn boundary and injects messages as `<system-reminder>` context.
 
-### State layout (`~/.orchestra/`)
+### State layout (`~/.tomy/`)
 
 All state is file-based JSON with flock. Key files:
 - `state/workers.json`, `state/tasks.json`, `state/projects.json` — registries
@@ -77,6 +77,6 @@ Before committing, determine the appropriate bump based on the changes and updat
 ## Conventions
 
 - Go's `flag` package stops parsing at the first non-flag arg. Commands that accept flags mixed with positional args must reorder args before `fs.Parse()` (see `cmdMsgSend` for the pattern).
-- Session names: `orch-<name>` (validated as alphanumeric + underscore + dash).
-- Worker branches: `orch/<worker-name>`.
+- Session names: `tomy-<name>` (validated as alphanumeric + underscore + dash).
+- Worker branches: `tomy/<worker-name>`.
 - Planner and worker sessions get auto-generated CLAUDE.md and `.claude/settings.json` at spawn time.

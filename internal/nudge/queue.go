@@ -113,7 +113,7 @@ func FormatForInjection(nudges []Nudge) string {
 		ago := time.Since(n.CreatedAt).Truncate(time.Second)
 		b.WriteString(fmt.Sprintf("From %s (%s ago):\n  %s\n\n", n.From, ago, n.Content))
 	}
-	b.WriteString("Review and respond to these messages using: orchestra msg inbox\n")
+	b.WriteString("Review and respond to these messages using: tomy msg inbox\n")
 	b.WriteString("</system-reminder>")
 	return b.String()
 }

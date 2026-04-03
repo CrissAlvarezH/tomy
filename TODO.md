@@ -23,14 +23,14 @@ Send a single message to every active worker at once. Currently messaging is one
 
 A single command that shows the full picture: active project, all workers with their status and current task, all tasks with progress, message queue depths, and session health. Currently you need to run `worker list`, `task list`, and `project status` separately and mentally compose them. This command composes everything into one view.
 
-**Commands:** `orchestra status` (enhanced beyond current `project status`)
+**Commands:** `tomy status` (enhanced beyond current `project status`)
 
 ## 5. Checkpoint & Recovery (Session Context Persistence)
 
 Save and restore worker context so a crashed session can resume where it left off. When a worker is actively working, periodically snapshot its state (current task, recent output, plan file). If the tmux session dies, a new session can be spawned and primed with the saved context instead of starting blind. Pairs well with Witness — detect crash, then auto-recover.
 
 **Commands:** `worker checkpoint <name>`, `worker recover <name>`
-**State:** `~/.orchestra/state/checkpoints/<worker>.json`
+**State:** `~/.tomy/state/checkpoints/<worker>.json`
 
 ## 6. Refinery (Merge Queue)
 
@@ -44,11 +44,11 @@ Automate the PR landing flow after workers complete tasks. Instead of the planne
 Reusable task definitions so common workflows don't need to be described from scratch every time. A formula is a template (TOML or YAML) that defines a set of tasks with descriptions, dependencies, and variable placeholders. Instead of the planner writing "create a REST endpoint for users with CRUD operations and tests" every time, it instantiates a formula like `api-crud` with `resource=users`. Saves planner tokens and ensures consistency.
 
 **Commands:** `formula create`, `formula list`, `formula show <name>`, `formula run <name> --var key=value`
-**State:** `~/.orchestra/formulas/` directory with template files
+**State:** `~/.tomy/formulas/` directory with template files
 
 ## 8. Escalation (Structured Error Routing)
 
 A severity-routed system for workers to report problems instead of sending unstructured messages. Workers can escalate issues with a severity level (info, warning, critical), and the system routes them appropriately — info goes to the planner's inbox, warnings get a nudge, critical interrupts immediately. Includes acknowledgment tracking so escalations don't get lost.
 
 **Commands:** `escalate <severity> <message> --from <worker>`, `escalate list`, `escalate ack <id>`
-**State:** `~/.orchestra/state/escalations.json`
+**State:** `~/.tomy/state/escalations.json`
