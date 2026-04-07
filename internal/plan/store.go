@@ -31,11 +31,12 @@ func generateID() string {
 }
 
 // Create adds a new plan and returns it.
-func (s *Store) Create(name string) (*Plan, error) {
+func (s *Store) Create(name, projectID string) (*Plan, error) {
 	id := generateID()
 	p := Plan{
 		ID:        id,
 		Name:      name,
+		ProjectID: projectID,
 		Status:    StatusDraft,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),

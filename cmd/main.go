@@ -24,7 +24,7 @@ import (
 	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "0.3.1"
+const version = "0.4.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -131,7 +131,7 @@ func main() {
 		}
 		switch os.Args[2] {
 		case "create":
-			cmdPlanCreate(os.Args[3:], plans)
+			cmdPlanCreate(os.Args[3:], plans, activeProj)
 		case "edit":
 			cmdPlanEdit(os.Args[3:], plans)
 		case "list":
@@ -520,7 +520,7 @@ func cmdRepoRemove(args []string, store *project.Store, proj *project.Project) {
 
 // --- Plan commands ---
 
-func cmdPlanCreate(args []string, store *plan.Store) {
+func cmdPlanCreate(args []string, store *plan.Store, proj *project.Project) {
 	fs := flag.NewFlagSet("plan create", flag.ExitOnError)
 	name := fs.String("name", "", "Plan name (required)")
 	desc := fs.String("desc", "", "Plan description (written to the plan's markdown file)")
@@ -530,7 +530,11 @@ func cmdPlanCreate(args []string, store *plan.Store) {
 		fatal("--name is required")
 	}
 
-	p, err := store.Create(*name)
+	var projectID string
+	if proj != nil {
+		projectID = proj.ID
+	}
+	p, err := store.Create(*name, projectID)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -1339,7 +1343,7 @@ func cmdRun(args []string, plans *plan.Store, tasks *task.Store, mgr *worker.Man
 	requireActiveProject(proj)
 
 	// Create plan
-	p, err := plans.Create(*name)
+	p, err := plans.Create(*name, proj.ID)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -1656,7 +1660,6 @@ func renderMonitor(b *strings.Builder, cfg *config.Config, activeProj *project.P
 
 	planStore := plan.NewStore(db)
 	taskStore := task.NewStore(db)
-	workers := worker.NewManager(db, cfg.WorkspacesDir, cfg.SessionPrefix)
 
 	allPlans, err := planStore.List()
 	if err != nil {
@@ -1666,16 +1669,9 @@ func renderMonitor(b *strings.Builder, cfg *config.Config, activeProj *project.P
 
 	// Filter plans to active project
 	if activeProj != nil {
-		allWorkers, _ := workers.List()
-		projectWorkers := make(map[string]bool)
-		for _, w := range allWorkers {
-			if w.ProjectID == activeProj.ID {
-				projectWorkers[w.Name] = true
-			}
-		}
 		var filtered []plan.Plan
 		for _, p := range allPlans {
-			if p.WorkerName == "" || projectWorkers[p.WorkerName] {
+			if p.ProjectID == activeProj.ID {
 				filtered = append(filtered, p)
 			}
 		}

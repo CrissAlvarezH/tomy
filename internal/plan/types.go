@@ -15,6 +15,7 @@ const (
 type Plan struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
+	ProjectID  string    `json:"project_id,omitempty"`
 	WorkerName string    `json:"worker_name,omitempty"`
 	Status     Status    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
