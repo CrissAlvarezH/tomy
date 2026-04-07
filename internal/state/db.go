@@ -50,6 +50,16 @@ func Open(path string) (*DB, error) {
 	return &DB{bolt: bdb}, nil
 }
 
+// OpenReadOnly opens the bbolt database in read-only mode.
+// Multiple read-only opens can coexist with a read-write open.
+func OpenReadOnly(path string) (*DB, error) {
+	bdb, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("open database (read-only): %w", err)
+	}
+	return &DB{bolt: bdb}, nil
+}
+
 // Close closes the database.
 func (db *DB) Close() error {
 	return db.bolt.Close()

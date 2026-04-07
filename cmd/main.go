@@ -202,7 +202,8 @@ func main() {
 		cmdRun(os.Args[2:], plans, tasks, workers, activeProj)
 
 	case "monitor":
-		cmdMonitor(os.Args[2:], plans, tasks, workers, activeProj)
+		db.Close() // release the file lock so other commands can run while monitor loops
+		cmdMonitor(os.Args[2:], cfg, activeProj)
 
 	case "completion":
 		cmdCompletion(os.Args[2:])
@@ -1641,9 +1642,21 @@ func renderPlan(b *strings.Builder, p plan.Plan, planTasks []task.Task) {
 	}
 }
 
-func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.Store, workers *worker.Manager, activeProj *project.Project, interval int) {
+func renderMonitor(b *strings.Builder, cfg *config.Config, activeProj *project.Project, interval int) {
 	b.Reset()
 	b.WriteString("\033[H\033[2J")
+
+	// Open DB in read-only mode — doesn't block other commands
+	db, err := state.OpenReadOnly(cfg.DBPath)
+	if err != nil {
+		fmt.Fprintf(b, "Error opening database: %v\n", err)
+		return
+	}
+	defer db.Close()
+
+	planStore := plan.NewStore(db)
+	taskStore := task.NewStore(db)
+	workers := worker.NewManager(db, cfg.WorkspacesDir, cfg.SessionPrefix)
 
 	allPlans, err := planStore.List()
 	if err != nil {
@@ -1690,7 +1703,7 @@ func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.St
 	fmt.Fprintf(b, "%sLast updated: %s%s\n", colorGray, time.Now().Format("15:04:05"), colorReset)
 }
 
-func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store, workers *worker.Manager, activeProj *project.Project) {
+func cmdMonitor(args []string, cfg *config.Config, activeProj *project.Project) {
 	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
 	interval := fs.Int("interval", 2, "refresh interval in seconds")
 	fs.Parse(args)
@@ -1704,7 +1717,7 @@ func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store, workers *wo
 	defer ticker.Stop()
 
 	// Render immediately
-	renderMonitor(&b, plans, tasks, workers, activeProj, *interval)
+	renderMonitor(&b, cfg, activeProj, *interval)
 	fmt.Print(b.String())
 
 	for {
@@ -1713,7 +1726,7 @@ func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store, workers *wo
 			fmt.Println("\nMonitor stopped.")
 			return
 		case <-ticker.C:
-			renderMonitor(&b, plans, tasks, workers, activeProj, *interval)
+			renderMonitor(&b, cfg, activeProj, *interval)
 			fmt.Print(b.String())
 		}
 	}
