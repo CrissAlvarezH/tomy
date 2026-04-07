@@ -24,7 +24,7 @@ import (
 	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "0.2.0"
+const version = "0.2.1"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)

@@ -2,7 +2,7 @@
 
 A CLI tool that manages projects with multiple repos, spawns Claude Code workers in tmux sessions, and coordinates work through a Planner session. Inspired by [Gas Town](https://github.com/steveyegge/gastown).
 
-Zero external dependencies — Go stdlib only.
+Single external dependency: [bbolt](https://github.com/etcd-io/bbolt) (pure Go key/value store).
 
 ## Prerequisites
 
@@ -232,7 +232,7 @@ clone-v1/
 │   ├── config/
 │   │   └── config.go          # Resolves ~/.tomy directories
 │   └── state/
-│       └── store.go           # Generic JSON read/write with syscall.Flock
+│       └── db.go              # bbolt database wrapper with typed generic helpers
 ├── build/                     # Compiled binary
 ├── Makefile
 ├── go.mod
@@ -265,14 +265,7 @@ All runtime data lives in `~/.tomy/`:
 ```
 ~/.tomy/
 ├── state/
-│   ├── workers.json           # Worker registry (with plan_id per worker)
-│   ├── tasks.json             # Task list with plan_id and status tracking
-│   ├── plans.json             # Plan registry (name, content_file, status, worker)
-│   ├── projects.json          # Project registry
-│   ├── active_project.json    # Currently active project pointer
-│   ├── inbox/                 # Per-recipient message inboxes
-│   ├── plans/                 # Plan content files (.md)
-│   └── nudge_queue/           # Deferred notifications for busy sessions
+│   └── tomy.db                # bbolt database (projects, tasks, plans, workers, inbox, nudges, meta)
 ├── planner/
 │   └── my-ecommerce/          # Planner home for this project
 │       └── CLAUDE.md          # Planner instructions (survives /clear)
@@ -333,13 +326,10 @@ make kill-all
 
 ## Dependencies
 
-None. The entire project uses Go standard library:
-
 | Need | Package |
 |------|---------|
+| Embedded key/value store | `go.etcd.io/bbolt` |
 | CLI flags | `flag` |
-| JSON state | `encoding/json` |
-| File locking | `syscall` |
 | Run tmux/git | `os/exec` |
 | Session name validation | `regexp` |
 | ID generation | `crypto/rand` |
