@@ -1,14 +1,14 @@
 package nudge
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/tomy/v1/internal/state"
 )
+
+const bucket = "nudges"
 
 // Nudge represents a queued notification for an agent.
 type Nudge struct {
@@ -17,86 +17,33 @@ type Nudge struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Queue manages a filesystem-based nudge queue.
-// Each recipient has a directory; each nudge is a timestamped JSON file.
+// Queue manages nudges in bbolt.
 type Queue struct {
-	baseDir string
+	db *state.DB
 }
 
-// NewQueue creates a queue rooted at baseDir.
-func NewQueue(baseDir string) *Queue {
-	return &Queue{baseDir: baseDir}
+// NewQueue creates a queue backed by the given database.
+func NewQueue(db *state.DB) *Queue {
+	return &Queue{db: db}
 }
 
-func (q *Queue) recipientDir(name string) string {
-	return filepath.Join(q.baseDir, name)
-}
-
-// Enqueue writes a nudge to the recipient's queue directory.
+// Enqueue writes a nudge for the given recipient.
 func (q *Queue) Enqueue(from, to, content string) error {
-	dir := q.recipientDir(to)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create nudge dir: %w", err)
-	}
-
 	n := Nudge{
 		From:      from,
 		Content:   content,
 		CreatedAt: time.Now(),
 	}
 
-	data, err := json.Marshal(n)
-	if err != nil {
-		return err
-	}
-
-	filename := fmt.Sprintf("%d.json", time.Now().UnixNano())
-	return os.WriteFile(filepath.Join(dir, filename), data, 0644)
+	// Composite key: recipient/timestamp_nano — lexicographic = chronological
+	key := fmt.Sprintf("%s/%d", to, time.Now().UnixNano())
+	return q.db.Put(bucket, key, n)
 }
 
 // Drain reads and removes all queued nudges for a recipient.
-// Returns them sorted by creation time.
+// Returns them sorted by creation time (keys are already sorted).
 func (q *Queue) Drain(name string) ([]Nudge, error) {
-	dir := q.recipientDir(name)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var nudges []Nudge
-	var files []string
-
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var n Nudge
-		if err := json.Unmarshal(data, &n); err != nil {
-			continue
-		}
-		nudges = append(nudges, n)
-		files = append(files, path)
-	}
-
-	// Sort by creation time
-	sort.Slice(nudges, func(i, j int) bool {
-		return nudges[i].CreatedAt.Before(nudges[j].CreatedAt)
-	})
-
-	// Remove consumed files
-	for _, f := range files {
-		os.Remove(f)
-	}
-
-	return nudges, nil
+	return state.DrainByPrefix[Nudge](q.db, bucket, name+"/")
 }
 
 // FormatForInjection formats drained nudges as a system-reminder block

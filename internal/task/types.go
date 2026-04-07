@@ -19,6 +19,7 @@ type Task struct {
 	Description   string    `json:"description"`
 	Status        Status    `json:"status"`
 	PlanID        string    `json:"plan_id,omitempty"`
+	Order         int       `json:"order"`
 	BlockedReason string    `json:"blocked_reason,omitempty"`
 	Result        string    `json:"result,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`

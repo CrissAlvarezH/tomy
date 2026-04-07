@@ -18,12 +18,13 @@ import (
 	"github.com/tomy/v1/internal/plan"
 	"github.com/tomy/v1/internal/planner"
 	"github.com/tomy/v1/internal/project"
+	"github.com/tomy/v1/internal/state"
 	"github.com/tomy/v1/internal/task"
 	"github.com/tomy/v1/internal/tmux"
 	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -46,12 +47,18 @@ func main() {
 		fatal(err.Error())
 	}
 
-	workers := worker.NewManager(cfg.StateDir, cfg.WorkspacesDir, cfg.SessionPrefix)
-	tasks := task.NewStore(cfg.StateDir)
-	plans := plan.NewStore(cfg.StateDir, cfg.PlansDir)
-	projects := project.NewStore(cfg.StateDir)
-	messages := msg.NewStore(cfg.InboxDir)
-	nudges := nudge.NewQueue(cfg.NudgeQueueDir)
+	db, err := state.Open(cfg.DBPath)
+	if err != nil {
+		fatal(err.Error())
+	}
+	defer db.Close()
+
+	workers := worker.NewManager(db, cfg.WorkspacesDir, cfg.SessionPrefix)
+	tasks := task.NewStore(db)
+	plans := plan.NewStore(db)
+	projects := project.NewStore(db)
+	messages := msg.NewStore(db)
+	nudges := nudge.NewQueue(db)
 
 	// Load active project (nil if none set)
 	activeProj, _ := projects.GetActive()
@@ -527,21 +534,17 @@ func cmdPlanCreate(args []string, store *plan.Store) {
 		fatal(err.Error())
 	}
 
-	// Create the content file directory
-	os.MkdirAll(store.PlansDir(), 0755)
-
-	// Initialize plan file with header and optional description
+	// Initialize plan content with header and optional description
 	var content strings.Builder
 	content.WriteString(fmt.Sprintf("# Plan: %s\n\nID: %s\n", p.Name, p.ID))
 	if *desc != "" {
 		content.WriteString(fmt.Sprintf("\n%s\n", *desc))
 	}
-	if err := os.WriteFile(p.ContentFile, []byte(content.String()), 0644); err != nil {
-		fatal(fmt.Sprintf("write plan file: %v", err))
+	if err := store.SetContent(p.ID, []byte(content.String())); err != nil {
+		fatal(fmt.Sprintf("write plan content: %v", err))
 	}
 
 	fmt.Printf("Created plan %s: %s\n", p.ID, p.Name)
-	fmt.Printf("  file: %s\n", p.ContentFile)
 	fmt.Printf("\nAdd tasks: tomy task create --plan %s --title \"...\"\n", p.ID)
 }
 
@@ -627,7 +630,6 @@ func cmdPlanShow(args []string, store *plan.Store, tasks *task.Store) {
 	fmt.Printf("Plan:   %s (%s)\n", p.Name, p.ID)
 	fmt.Printf("Status: %s\n", p.Status)
 	fmt.Printf("Worker: %s\n", valueOr(p.WorkerName, "-"))
-	fmt.Printf("File:   %s\n", p.ContentFile)
 
 	planTasks, _ := tasks.ListByPlan(p.ID)
 	if len(planTasks) == 0 {
@@ -694,13 +696,13 @@ func cmdPlanAssign(args []string, store *plan.Store, tasks *task.Store, mgr *wor
 		fatal("plan has no tasks — add tasks first with: tomy task create --plan " + planID + " --title \"...\"")
 	}
 
-	prompt := buildPlanPrompt(p, planTasks, workerName)
-	if err := os.WriteFile(p.ContentFile, []byte(prompt), 0644); err != nil {
-		fatal(fmt.Sprintf("write plan file: %v", err))
+	prompt := buildPlanPrompt(p, planTasks, workerName, store)
+	if err := store.SetContent(planID, []byte(prompt)); err != nil {
+		fatal(fmt.Sprintf("write plan content: %v", err))
 	}
 
-	// Deliver the plan file to the worker
-	if err := mgr.Assign(workerName, prompt, store.PlansDir()); err != nil {
+	// Deliver the plan to the worker
+	if err := mgr.Assign(workerName, []byte(prompt)); err != nil {
 		fatal(err.Error())
 	}
 
@@ -1336,7 +1338,6 @@ func cmdRun(args []string, plans *plan.Store, tasks *task.Store, mgr *worker.Man
 	requireActiveProject(proj)
 
 	// Create plan
-	os.MkdirAll(plans.PlansDir(), 0755)
 	p, err := plans.Create(*name)
 	if err != nil {
 		fatal(err.Error())
@@ -1370,11 +1371,11 @@ func cmdRun(args []string, plans *plan.Store, tasks *task.Store, mgr *worker.Man
 
 	// Build and deliver plan
 	planTasks := []task.Task{*t}
-	prompt := buildPlanPrompt(p, planTasks, wName)
-	if err := os.WriteFile(p.ContentFile, []byte(prompt), 0644); err != nil {
-		fatal(fmt.Sprintf("write plan file: %v", err))
+	prompt := buildPlanPrompt(p, planTasks, wName, plans)
+	if err := plans.SetContent(p.ID, []byte(prompt)); err != nil {
+		fatal(fmt.Sprintf("write plan content: %v", err))
 	}
-	if err := mgr.Assign(wName, prompt, plans.PlansDir()); err != nil {
+	if err := mgr.Assign(wName, []byte(prompt)); err != nil {
 		fatal(err.Error())
 	}
 
@@ -1450,11 +1451,11 @@ func cmdDone(args []string, plans *plan.Store, store *task.Store, mgr *worker.Ma
 
 // --- Helpers ---
 
-func buildPlanPrompt(p *plan.Plan, planTasks []task.Task, workerName string) string {
+func buildPlanPrompt(p *plan.Plan, planTasks []task.Task, workerName string, store *plan.Store) string {
 	var b strings.Builder
 
-	// Read existing plan file content (has the description from plan create)
-	existing, err := os.ReadFile(p.ContentFile)
+	// Read existing plan content (has the description from plan create)
+	existing, err := store.GetContent(p.ID)
 	if err == nil && len(existing) > 0 {
 		b.Write(existing)
 		b.WriteString("\n")

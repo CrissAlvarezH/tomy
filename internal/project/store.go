@@ -3,6 +3,7 @@ package project
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,30 +11,21 @@ import (
 
 	"github.com/tomy/v1/internal/git"
 	"github.com/tomy/v1/internal/state"
+	bolt "go.etcd.io/bbolt"
+)
+
+const (
+	bucket     = "projects"
+	metaBucket = "meta"
+	activeKey  = "active_project"
 )
 
 type Store struct {
-	projectsPath string
-	activePath   string
+	db *state.DB
 }
 
-func NewStore(stateDir string) *Store {
-	return &Store{
-		projectsPath: filepath.Join(stateDir, "projects.json"),
-		activePath:   filepath.Join(stateDir, "active_project.json"),
-	}
-}
-
-func (s *Store) loadAll() ([]Project, error) {
-	var projects []Project
-	if err := state.ReadJSON(s.projectsPath, &projects); err != nil {
-		return nil, err
-	}
-	return projects, nil
-}
-
-func (s *Store) saveAll(projects []Project) error {
-	return state.WriteJSON(s.projectsPath, projects)
+func NewStore(db *state.DB) *Store {
+	return &Store{db: db}
 }
 
 func generateID() string {
@@ -44,12 +36,11 @@ func generateID() string {
 
 // Create adds a new project and sets it as active.
 func (s *Store) Create(name string) (*Project, error) {
-	projects, err := s.loadAll()
+	// Check for duplicate names
+	projects, err := state.List[Project](s.db, bucket)
 	if err != nil {
 		return nil, err
 	}
-
-	// Check for duplicate names
 	for _, p := range projects {
 		if p.Name == name {
 			return nil, fmt.Errorf("project %q already exists", name)
@@ -63,9 +54,8 @@ func (s *Store) Create(name string) (*Project, error) {
 		Status:    StatusActive,
 		CreatedAt: time.Now(),
 	}
-	projects = append(projects, p)
 
-	if err := s.saveAll(projects); err != nil {
+	if err := s.db.Put(bucket, p.ID, p); err != nil {
 		return nil, err
 	}
 
@@ -79,52 +69,44 @@ func (s *Store) Create(name string) (*Project, error) {
 
 // List returns all projects.
 func (s *Store) List() ([]Project, error) {
-	return s.loadAll()
+	return state.List[Project](s.db, bucket)
 }
 
 // Get returns a project by ID or name.
 func (s *Store) Get(idOrName string) (*Project, error) {
-	projects, err := s.loadAll()
+	// Try by ID first
+	var p Project
+	if err := s.db.Get(bucket, idOrName, &p); err == nil {
+		return &p, nil
+	}
+
+	// Fall back to name search
+	projects, err := state.List[Project](s.db, bucket)
 	if err != nil {
 		return nil, err
 	}
 	for _, p := range projects {
-		if p.ID == idOrName || p.Name == idOrName {
+		if p.Name == idOrName {
 			return &p, nil
 		}
 	}
 	return nil, fmt.Errorf("project %q not found", idOrName)
 }
 
-// Remove deletes a project by ID or name. If the removed project was active, clears the active project.
+// Remove deletes a project by ID or name.
 func (s *Store) Remove(idOrName string) error {
-	projects, err := s.loadAll()
+	p, err := s.Get(idOrName)
 	if err != nil {
 		return err
 	}
 
-	found := false
-	var remaining []Project
-	var removedID string
-	for _, p := range projects {
-		if p.ID == idOrName || p.Name == idOrName {
-			found = true
-			removedID = p.ID
-		} else {
-			remaining = append(remaining, p)
-		}
-	}
-	if !found {
-		return fmt.Errorf("project %q not found", idOrName)
-	}
-
-	if err := s.saveAll(remaining); err != nil {
+	if err := s.db.Delete(bucket, p.ID); err != nil {
 		return err
 	}
 
 	// Clear active project if it was the one removed
 	active, _ := s.GetActive()
-	if active != nil && active.ID == removedID {
+	if active != nil && active.ID == p.ID {
 		return s.SetActive("")
 	}
 	return nil
@@ -132,23 +114,23 @@ func (s *Store) Remove(idOrName string) error {
 
 // SetActive sets the active project by ID.
 func (s *Store) SetActive(projectID string) error {
-	return state.WriteJSON(s.activePath, ActiveProject{ProjectID: projectID})
+	return s.db.Put(metaBucket, activeKey, projectID)
 }
 
 // GetActive returns the currently active project, or nil if none.
 func (s *Store) GetActive() (*Project, error) {
-	var active ActiveProject
-	if err := state.ReadJSON(s.activePath, &active); err != nil {
-		return nil, err
-	}
-	if active.ProjectID == "" {
+	var activeID string
+	if err := s.db.Get(metaBucket, activeKey, &activeID); err != nil {
 		return nil, nil
 	}
-	p, err := s.Get(active.ProjectID)
-	if err != nil {
+	if activeID == "" {
+		return nil, nil
+	}
+	var p Project
+	if err := s.db.Get(bucket, activeID, &p); err != nil {
 		return nil, nil // active project was deleted, treat as no active
 	}
-	return p, nil
+	return &p, nil
 }
 
 // AddRepo adds a repo to a project.
@@ -168,20 +150,11 @@ func (s *Store) AddRepo(projectID string, name string, path string, setupCmd str
 		return nil, fmt.Errorf("path %q is not a directory", absPath)
 	}
 
-	projects, err := s.loadAll()
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range projects {
-		if projects[i].ID != projectID {
-			continue
-		}
-
+	return s.updateProject(projectID, func(p *Project) (*Repo, error) {
 		// Check for duplicate repo names
-		for _, r := range projects[i].Repos {
+		for _, r := range p.Repos {
 			if r.Name == name {
-				return nil, fmt.Errorf("repo %q already exists in project %q", name, projects[i].Name)
+				return nil, fmt.Errorf("repo %q already exists in project %q", name, p.Name)
 			}
 		}
 
@@ -191,32 +164,17 @@ func (s *Store) AddRepo(projectID string, name string, path string, setupCmd str
 			IsGitRepo:    git.IsGitRepo(absPath),
 			SetupCommand: setupCmd,
 		}
-		projects[i].Repos = append(projects[i].Repos, repo)
-
-		if err := s.saveAll(projects); err != nil {
-			return nil, err
-		}
+		p.Repos = append(p.Repos, repo)
 		return &repo, nil
-	}
-
-	return nil, fmt.Errorf("project %q not found", projectID)
+	})
 }
 
 // RemoveRepo removes a repo from a project by name.
 func (s *Store) RemoveRepo(projectID string, repoName string) error {
-	projects, err := s.loadAll()
-	if err != nil {
-		return err
-	}
-
-	for i := range projects {
-		if projects[i].ID != projectID {
-			continue
-		}
-
+	_, err := s.updateProject(projectID, func(p *Project) (*Repo, error) {
 		found := false
 		var remaining []Repo
-		for _, r := range projects[i].Repos {
+		for _, r := range p.Repos {
 			if r.Name == repoName {
 				found = true
 			} else {
@@ -224,36 +182,26 @@ func (s *Store) RemoveRepo(projectID string, repoName string) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("repo %q not found in project %q", repoName, projects[i].Name)
+			return nil, fmt.Errorf("repo %q not found in project %q", repoName, p.Name)
 		}
-		projects[i].Repos = remaining
-		return s.saveAll(projects)
-	}
-
-	return fmt.Errorf("project %q not found", projectID)
+		p.Repos = remaining
+		return nil, nil
+	})
+	return err
 }
 
 // SetRepoSetup updates the setup command for a repo.
 func (s *Store) SetRepoSetup(projectID string, repoName string, setupCmd string) error {
-	projects, err := s.loadAll()
-	if err != nil {
-		return err
-	}
-
-	for i := range projects {
-		if projects[i].ID != projectID {
-			continue
-		}
-		for j := range projects[i].Repos {
-			if projects[i].Repos[j].Name == repoName {
-				projects[i].Repos[j].SetupCommand = setupCmd
-				return s.saveAll(projects)
+	_, err := s.updateProject(projectID, func(p *Project) (*Repo, error) {
+		for j := range p.Repos {
+			if p.Repos[j].Name == repoName {
+				p.Repos[j].SetupCommand = setupCmd
+				return nil, nil
 			}
 		}
-		return fmt.Errorf("repo %q not found in project %q", repoName, projects[i].Name)
-	}
-
-	return fmt.Errorf("project %q not found", projectID)
+		return nil, fmt.Errorf("repo %q not found in project %q", repoName, p.Name)
+	})
+	return err
 }
 
 // GetRepo returns a repo by name from a project.
@@ -264,4 +212,31 @@ func (s *Store) GetRepo(proj *Project, repoName string) (*Repo, error) {
 		}
 	}
 	return nil, fmt.Errorf("repo %q not found in project %q", repoName, proj.Name)
+}
+
+// updateProject is a helper that does a read-modify-write on a project in a single transaction.
+func (s *Store) updateProject(projectID string, fn func(*Project) (*Repo, error)) (*Repo, error) {
+	var result *Repo
+	err := s.db.Bolt().Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		v := b.Get([]byte(projectID))
+		if v == nil {
+			return fmt.Errorf("project %q not found", projectID)
+		}
+		var p Project
+		if err := json.Unmarshal(v, &p); err != nil {
+			return err
+		}
+		r, err := fn(&p)
+		if err != nil {
+			return err
+		}
+		result = r
+		data, err := json.Marshal(p)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(projectID), data)
+	})
+	return result, err
 }

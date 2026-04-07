@@ -15,7 +15,7 @@ make vet            # go vet
 
 Useful during development:
 ```bash
-make reset          # Wipe state files (keeps sessions alive)
+make reset          # Wipe state database (keeps sessions alive)
 make nuke           # Kill all tmux sessions + wipe ~/.tomy
 make workers        # Quick alias for tomy worker list
 make tasks          # Quick alias for tomy task list
@@ -26,7 +26,7 @@ Run a single test: `go test ./internal/tmux/ -run TestIsIdle -v`
 
 ## Architecture
 
-Tmux-based multi-agent tomytor for Claude Code. A **planner** session coordinates **worker** sessions, each running Claude Code in isolated git worktrees. Zero external dependencies (Go stdlib only).
+Tmux-based multi-agent tomytor for Claude Code. A **planner** session coordinates **worker** sessions, each running Claude Code in isolated git worktrees. Single external dependency: bbolt (pure Go key/value store).
 
 ### Key flow
 1. User creates a **project** and adds **repos** to it
@@ -38,27 +38,28 @@ Tmux-based multi-agent tomytor for Claude Code. A **planner** session coordinate
 ### Packages (`internal/`)
 
 - **config** — Resolves `~/.tomy` directory layout (`TOMY_HOME` overrides)
-- **state** — JSON persistence with `syscall.Flock` for concurrent access. All stores use this.
+- **state** — bbolt database wrapper with typed helpers (`Get`, `Put`, `Delete`, `List`, `ListByPrefix`, `DrainByPrefix`). All stores use this.
 - **project** — Project/repo CRUD, active project tracking
 - **worker** — Worker lifecycle: spawn (creates worktrees + tmux session + CLAUDE.md + hooks), kill (cleanup worktrees), list, attach, assign
 - **task** — Task CRUD with status flow: pending → assigned → in-progress → done/failed
 - **planner** — Planner session management, system prompt rendering via `text/template`
 - **tmux** — Wrapper around tmux CLI. `IsIdle()` polls for prompt visibility + busy indicator for safe message delivery
-- **msg** — Per-recipient inbox stored as JSON (`state/inbox/<name>.json`)
-- **nudge** — Filesystem queue (`state/nudge_queue/<name>/`) for deferred notifications. Drained via `--inject` flag and formatted as `<system-reminder>` blocks for Claude Code hook injection
+- **msg** — Per-recipient inbox stored in bbolt `inbox` bucket with composite keys (`recipient/msg_id`)
+- **nudge** — Deferred notifications in bbolt `nudges` bucket with composite keys (`recipient/timestamp`). Drained atomically via `--inject` flag and formatted as `<system-reminder>` blocks for Claude Code hook injection
 - **git** — Git worktree add/remove, repo detection
 
 ### Messaging: idle-aware delivery
 
-`msg send` detects if the recipient's tmux session is idle (prompt visible, no "esc to interrupt"). If idle, delivers via `tmux send-keys`. If busy, enqueues a nudge to disk. A `UserPromptSubmit` hook (written to `.claude/settings.json` at spawn time) drains the queue at each turn boundary and injects messages as `<system-reminder>` context.
+`msg send` detects if the recipient's tmux session is idle (prompt visible, no "esc to interrupt"). If idle, delivers via `tmux send-keys`. If busy, enqueues a nudge to bbolt. A `UserPromptSubmit` hook (written to `.claude/settings.json` at spawn time) drains the queue at each turn boundary and injects messages as `<system-reminder>` context.
 
 ### State layout (`~/.tomy/`)
 
-All state is file-based JSON with flock. Key files:
-- `state/workers.json`, `state/tasks.json`, `state/projects.json` — registries
-- `state/inbox/<name>.json` — message inboxes
-- `state/nudge_queue/<name>/*.json` — queued nudges (timestamped)
-- `state/plans/<name>.md` — persisted task assignment prompts
+All state lives in a single bbolt database with ACID transactions:
+- `state/tomy.db` — bbolt database containing all buckets:
+  - `projects`, `tasks`, `plans`, `plan_content`, `workers` — entity stores
+  - `inbox` — messages with composite keys (`recipient/msg_id`)
+  - `nudges` — deferred notifications with composite keys (`recipient/timestamp`)
+  - `meta` — singleton values (e.g. `active_project`)
 - `workspaces/<project>/<worker>/` — worker home dirs with worktrees
 
 ### CLI routing

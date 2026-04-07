@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,17 +11,20 @@ import (
 	"github.com/tomy/v1/internal/project"
 	"github.com/tomy/v1/internal/state"
 	"github.com/tomy/v1/internal/tmux"
+	bolt "go.etcd.io/bbolt"
 )
 
+const bucket = "workers"
+
 type Manager struct {
-	path          string
+	db            *state.DB
 	workspacesDir string
 	sessionPrefix string
 }
 
-func NewManager(stateDir, workspacesDir, sessionPrefix string) *Manager {
+func NewManager(db *state.DB, workspacesDir, sessionPrefix string) *Manager {
 	return &Manager{
-		path:          filepath.Join(stateDir, "workers.json"),
+		db:            db,
 		workspacesDir: workspacesDir,
 		sessionPrefix: sessionPrefix,
 	}
@@ -28,18 +32,6 @@ func NewManager(stateDir, workspacesDir, sessionPrefix string) *Manager {
 
 func (m *Manager) SessionName(name string) string {
 	return m.sessionPrefix + "-" + name
-}
-
-func (m *Manager) loadAll() ([]Worker, error) {
-	var workers []Worker
-	if err := state.ReadJSON(m.path, &workers); err != nil {
-		return nil, err
-	}
-	return workers, nil
-}
-
-func (m *Manager) saveAll(workers []Worker) error {
-	return state.WriteJSON(m.path, workers)
 }
 
 // SpawnOptions configures how a worker is spawned.
@@ -55,7 +47,8 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		return nil, fmt.Errorf("project is required to spawn a worker")
 	}
 
-	workers, err := m.loadAll()
+	// Check for duplicate
+	workers, err := state.List[Worker](m.db, bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -206,8 +199,7 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 		CreatedAt:    time.Now(),
 	}
 
-	workers = append(workers, w)
-	if err := m.saveAll(workers); err != nil {
+	if err := m.db.Put(bucket, w.Name, w); err != nil {
 		tmux.KillSession(session)
 		return nil, err
 	}
@@ -217,39 +209,26 @@ func (m *Manager) Spawn(opts SpawnOptions) (*Worker, error) {
 
 // Kill destroys a worker's tmux session, cleans up worktrees, and removes from registry.
 func (m *Manager) Kill(name string) error {
-	workers, err := m.loadAll()
-	if err != nil {
-		return err
-	}
-
-	found := false
-	var remaining []Worker
-	for _, w := range workers {
-		if w.Name == name {
-			found = true
-			session := m.SessionName(name)
-			if tmux.HasSession(session) {
-				tmux.KillSession(session)
-			}
-			// Clean up all worktrees
-			for _, wtDir := range w.WorktreeDirs {
-				git.WorktreeRemove(wtDir, wtDir)
-			}
-		} else {
-			remaining = append(remaining, w)
-		}
-	}
-
-	if !found {
+	var w Worker
+	if err := m.db.Get(bucket, name, &w); err != nil {
 		return fmt.Errorf("worker %q not found", name)
 	}
 
-	return m.saveAll(remaining)
+	session := m.SessionName(name)
+	if tmux.HasSession(session) {
+		tmux.KillSession(session)
+	}
+	// Clean up all worktrees
+	for _, wtDir := range w.WorktreeDirs {
+		git.WorktreeRemove(wtDir, wtDir)
+	}
+
+	return m.db.Delete(bucket, name)
 }
 
 // List returns all registered workers, with live tmux status check.
 func (m *Manager) List() ([]Worker, error) {
-	workers, err := m.loadAll()
+	workers, err := state.List[Worker](m.db, bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -265,34 +244,35 @@ func (m *Manager) List() ([]Worker, error) {
 
 // Get returns a single worker by name.
 func (m *Manager) Get(name string) (*Worker, error) {
-	workers, err := m.loadAll()
-	if err != nil {
-		return nil, err
+	var w Worker
+	if err := m.db.Get(bucket, name, &w); err != nil {
+		return nil, fmt.Errorf("worker %q not found", name)
 	}
-	for _, w := range workers {
-		if w.Name == name {
-			if !tmux.HasSession(w.Session) {
-				w.Status = StatusFailed
-			}
-			return &w, nil
-		}
+	if !tmux.HasSession(w.Session) {
+		w.Status = StatusFailed
 	}
-	return nil, fmt.Errorf("worker %q not found", name)
+	return &w, nil
 }
 
 // Update modifies a worker in-place using the provided function.
 func (m *Manager) Update(name string, fn func(*Worker)) error {
-	workers, err := m.loadAll()
-	if err != nil {
-		return err
-	}
-	for i := range workers {
-		if workers[i].Name == name {
-			fn(&workers[i])
-			return m.saveAll(workers)
+	return m.db.Bolt().Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		v := b.Get([]byte(name))
+		if v == nil {
+			return fmt.Errorf("worker %q not found", name)
 		}
-	}
-	return fmt.Errorf("worker %q not found", name)
+		var w Worker
+		if err := json.Unmarshal(v, &w); err != nil {
+			return err
+		}
+		fn(&w)
+		data, err := json.Marshal(w)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(name), data)
+	})
 }
 
 // Attach connects the user's terminal to a worker's tmux session.
@@ -304,8 +284,8 @@ func (m *Manager) Attach(name string) error {
 	return tmux.AttachSession(session)
 }
 
-// Assign saves the plan to a file and delivers it to the worker's Claude session.
-func (m *Manager) Assign(name string, prompt string, plansDir string) error {
+// Assign writes the plan content to a temp file and delivers it to the worker's Claude session.
+func (m *Manager) Assign(name string, content []byte) error {
 	w, err := m.Get(name)
 	if err != nil {
 		return err
@@ -314,15 +294,14 @@ func (m *Manager) Assign(name string, prompt string, plansDir string) error {
 		return fmt.Errorf("worker %q session is not running", name)
 	}
 
-	// Save plan persistently
-	os.MkdirAll(plansDir, 0755)
-	planFile := filepath.Join(plansDir, name+".md")
-	if err := os.WriteFile(planFile, []byte(prompt), 0644); err != nil {
-		return fmt.Errorf("write plan file: %w", err)
+	// Write to a temp file for tmux delivery via cat
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("tomy-plan-%s.md", name))
+	if err := os.WriteFile(tmpFile, content, 0644); err != nil {
+		return fmt.Errorf("write temp plan file: %w", err)
 	}
 
 	// Deliver plan to worker session
-	cmd := fmt.Sprintf("cat %s", planFile)
+	cmd := fmt.Sprintf("cat %s", tmpFile)
 	return tmux.SendKeys(w.Session, cmd)
 }
 

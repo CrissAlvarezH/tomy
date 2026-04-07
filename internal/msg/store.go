@@ -3,34 +3,21 @@ package msg
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"path/filepath"
+	"encoding/json"
 	"time"
 
 	"github.com/tomy/v1/internal/state"
+	bolt "go.etcd.io/bbolt"
 )
 
+const bucket = "inbox"
+
 type Store struct {
-	inboxDir string
+	db *state.DB
 }
 
-func NewStore(inboxDir string) *Store {
-	return &Store{inboxDir: inboxDir}
-}
-
-func (s *Store) inboxPath(name string) string {
-	return filepath.Join(s.inboxDir, name+".json")
-}
-
-func (s *Store) loadInbox(name string) ([]Message, error) {
-	var messages []Message
-	if err := state.ReadJSON(s.inboxPath(name), &messages); err != nil {
-		return nil, err
-	}
-	return messages, nil
-}
-
-func (s *Store) saveInbox(name string, messages []Message) error {
-	return state.WriteJSON(s.inboxPath(name), messages)
+func NewStore(db *state.DB) *Store {
+	return &Store{db: db}
 }
 
 func generateID() string {
@@ -41,11 +28,6 @@ func generateID() string {
 
 // Send adds a message to the recipient's inbox.
 func (s *Store) Send(from, to, content string) (*Message, error) {
-	messages, err := s.loadInbox(to)
-	if err != nil {
-		return nil, err
-	}
-
 	m := Message{
 		ID:        generateID(),
 		From:      from,
@@ -55,8 +37,8 @@ func (s *Store) Send(from, to, content string) (*Message, error) {
 		CreatedAt: time.Now(),
 	}
 
-	messages = append(messages, m)
-	if err := s.saveInbox(to, messages); err != nil {
+	key := to + "/" + m.ID
+	if err := s.db.Put(bucket, key, m); err != nil {
 		return nil, err
 	}
 	return &m, nil
@@ -64,7 +46,7 @@ func (s *Store) Send(from, to, content string) (*Message, error) {
 
 // Unread returns all unread messages for a recipient.
 func (s *Store) Unread(name string) ([]Message, error) {
-	messages, err := s.loadInbox(name)
+	messages, _, err := state.ListByPrefix[Message](s.db, bucket, name+"/")
 	if err != nil {
 		return nil, err
 	}
@@ -80,13 +62,27 @@ func (s *Store) Unread(name string) ([]Message, error) {
 
 // MarkAllRead marks all messages as read for a recipient.
 func (s *Store) MarkAllRead(name string) error {
-	messages, err := s.loadInbox(name)
-	if err != nil {
-		return err
-	}
-
-	for i := range messages {
-		messages[i].Read = true
-	}
-	return s.saveInbox(name, messages)
+	prefix := name + "/"
+	return s.db.Bolt().Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		c := b.Cursor()
+		pfx := []byte(prefix)
+		for k, v := c.Seek(pfx); k != nil && len(k) >= len(pfx) && string(k[:len(pfx)]) == prefix; k, v = c.Next() {
+			var m Message
+			if err := json.Unmarshal(v, &m); err != nil {
+				continue
+			}
+			if !m.Read {
+				m.Read = true
+				data, err := json.Marshal(m)
+				if err != nil {
+					continue
+				}
+				if err := b.Put(k, data); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }

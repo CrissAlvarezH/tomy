@@ -3,39 +3,25 @@ package plan
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/tomy/v1/internal/state"
+	bolt "go.etcd.io/bbolt"
+)
+
+const (
+	bucket        = "plans"
+	contentBucket = "plan_content"
 )
 
 type Store struct {
-	path     string
-	plansDir string
+	db *state.DB
 }
 
-func NewStore(stateDir, plansDir string) *Store {
-	return &Store{
-		path:     filepath.Join(stateDir, "plans.json"),
-		plansDir: plansDir,
-	}
-}
-
-func (s *Store) PlansDir() string {
-	return s.plansDir
-}
-
-func (s *Store) loadAll() ([]Plan, error) {
-	var plans []Plan
-	if err := state.ReadJSON(s.path, &plans); err != nil {
-		return nil, err
-	}
-	return plans, nil
-}
-
-func (s *Store) saveAll(plans []Plan) error {
-	return state.WriteJSON(s.path, plans)
+func NewStore(db *state.DB) *Store {
+	return &Store{db: db}
 }
 
 func generateID() string {
@@ -46,25 +32,16 @@ func generateID() string {
 
 // Create adds a new plan and returns it.
 func (s *Store) Create(name string) (*Plan, error) {
-	plans, err := s.loadAll()
-	if err != nil {
-		return nil, err
-	}
-
 	id := generateID()
-	contentFile := filepath.Join(s.plansDir, id+".md")
-
 	p := Plan{
-		ID:          id,
-		Name:        name,
-		ContentFile: contentFile,
-		Status:      StatusDraft,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:        id,
+		Name:      name,
+		Status:    StatusDraft,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
-	plans = append(plans, p)
 
-	if err := s.saveAll(plans); err != nil {
+	if err := s.db.Put(bucket, id, p); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -72,35 +49,50 @@ func (s *Store) Create(name string) (*Plan, error) {
 
 // List returns all plans.
 func (s *Store) List() ([]Plan, error) {
-	return s.loadAll()
+	return state.List[Plan](s.db, bucket)
 }
 
 // Get returns a single plan by ID.
 func (s *Store) Get(id string) (*Plan, error) {
-	plans, err := s.loadAll()
-	if err != nil {
-		return nil, err
+	var p Plan
+	if err := s.db.Get(bucket, id, &p); err != nil {
+		return nil, fmt.Errorf("plan %q not found", id)
 	}
-	for _, p := range plans {
-		if p.ID == id {
-			return &p, nil
-		}
-	}
-	return nil, fmt.Errorf("plan %q not found", id)
+	return &p, nil
 }
 
 // Update modifies a plan in-place using the provided function.
 func (s *Store) Update(id string, fn func(*Plan)) error {
-	plans, err := s.loadAll()
-	if err != nil {
-		return err
-	}
-	for i := range plans {
-		if plans[i].ID == id {
-			fn(&plans[i])
-			plans[i].UpdatedAt = time.Now()
-			return s.saveAll(plans)
+	return s.db.Bolt().Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		v := b.Get([]byte(id))
+		if v == nil {
+			return fmt.Errorf("plan %q not found", id)
 		}
+		var p Plan
+		if err := json.Unmarshal(v, &p); err != nil {
+			return err
+		}
+		fn(&p)
+		p.UpdatedAt = time.Now()
+		data, err := json.Marshal(p)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), data)
+	})
+}
+
+// GetContent returns the markdown content for a plan.
+func (s *Store) GetContent(id string) ([]byte, error) {
+	data, err := s.db.GetRaw(contentBucket, id)
+	if err != nil {
+		return nil, err
 	}
-	return fmt.Errorf("plan %q not found", id)
+	return data, nil
+}
+
+// SetContent stores the markdown content for a plan.
+func (s *Store) SetContent(id string, content []byte) error {
+	return s.db.PutRaw(contentBucket, id, content)
 }

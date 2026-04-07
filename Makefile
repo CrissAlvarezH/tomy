@@ -65,9 +65,9 @@ check: fmt vet test ## Run fmt + vet + test
 clean: ## Remove build artifacts
 	rm -rf $(BUILD_DIR)
 
-reset: ## Wipe state files (~/.tomy/state/) — does NOT kill tmux sessions
-	rm -f $(STATE_DIR)/workers.json $(STATE_DIR)/tasks.json
-	@echo "State files cleared."
+reset: ## Wipe state database (~/.tomy/state/) — does NOT kill tmux sessions
+	rm -f $(STATE_DIR)/tomy.db
+	@echo "State database cleared."
 
 nuke: kill-all ## Kill all sessions + wipe ~/.tomy entirely
 	rm -rf $(TOMY_HOME)
