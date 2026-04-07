@@ -123,6 +123,41 @@ tomy run --name "..." --title "..." --desc "..." [--worker <name>]
 
 Creates a plan with one task, spawns a worker, and assigns in one command.
 
+### Monitor
+
+```bash
+tomy monitor [--interval <seconds>]    # Live dashboard (default: 2s refresh)
+```
+
+A live-refreshing terminal dashboard that shows all plans and their tasks with color-coded statuses. Press `Ctrl+C` to exit.
+
+```
+tomy monitor  [my-app]  (every 2s, Ctrl+C to exit)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⏵ add-auth-middleware  [in-progress]  worker: add-auth  ── 2/5 done
+  ├─ ● #a1b2  Create auth middleware                      ✓ done
+  ├─ ● #c3d4  Add JWT validation                          ✓ done
+  ├─ ● #e5f6  Integrate with user service                 ◆ in-progress
+  ├─ ● #a7b8  Add rate limiting                           ○ assigned
+  └─ ● #c9d0  Write integration tests                     ○ assigned
+
+⏵ fix-api-validation  [assigned]  worker: fix-api  ── 0/3 done
+  ├─ ● #e1f2  Fix request schema validation               ○ assigned
+  ├─ ● #a3b4  Add error response formatting               ○ assigned
+  └─ ● #c5d6  Update API docs                             ○ assigned
+
+✓ setup-ci-pipeline  [done]  worker: setup-ci  ── 4/4 done
+  ├─ ● #e7f8  Configure GitHub Actions                    ✓ done
+  ├─ ● #a9b0  Add lint checks                             ✓ done
+  ├─ ● #c1d2  Add test runner                             ✓ done
+  └─ ● #e3f4  Deploy preview environments                 ✓ done
+
+Last updated: 14:32:07
+```
+
+Status icons: `✓` done, `◆` in-progress, `✗` failed, `⊘` blocked, `○` assigned, `·` pending
+
 ## How It Works
 
 ```
