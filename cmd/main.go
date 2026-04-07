@@ -24,7 +24,7 @@ import (
 	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "0.2.1"
+const version = "0.3.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -1634,7 +1634,7 @@ func renderPlan(b *strings.Builder, p plan.Plan, planTasks []task.Task) {
 		tc := statusColor(string(t.Status))
 		ti := statusIcon(string(t.Status))
 		title := truncate(t.Title, 45)
-		fmt.Fprintf(b, "  %s ● #%s  %-45s %s%s %s%s", prefix, t.ID, title, tc, ti, t.Status, colorReset)
+		fmt.Fprintf(b, "  %s ● #%s  %-45s %s%s %s%s", prefix, t.ID[:2], title, tc, ti, t.Status, colorReset)
 		if t.Status == task.StatusBlocked && t.BlockedReason != "" {
 			fmt.Fprintf(b, " — %s", t.BlockedReason)
 		}
@@ -1693,6 +1693,9 @@ func renderMonitor(b *strings.Builder, cfg *config.Config, activeProj *project.P
 		fmt.Fprintf(b, "%sNo plans found.%s\n", colorGray, colorReset)
 	} else {
 		sortPlans(allPlans)
+		if len(allPlans) > 10 {
+			allPlans = allPlans[:10]
+		}
 		for _, p := range allPlans {
 			planTasks, _ := taskStore.ListByPlan(p.ID)
 			renderPlan(b, p, planTasks)

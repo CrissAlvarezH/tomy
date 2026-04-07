@@ -78,6 +78,31 @@ Messages are delivered intelligently:
 11. Send instructions or questions to workers with msg send, check your inbox with msg inbox
 12. When the worker finishes, review its PR (it targets the branch the worktree was created from)
 
+## The Solo Planner Trap
+
+Your instinct is "I can do this, so I will." You're a capable coder — that's not
+the question. The question is whether doing it yourself is the **best use of your
+context window.** Every file you read, every function you trace, every edit you
+make burns context you need for coordination and planning.
+
+### The decision tree
+
+When work comes in, ask yourself:
+
+1. **Is it coordination?** (status checks, messages, plan creation, reviewing PRs)
+   → Do it yourself. This IS your job.
+2. **Is it a code change?** → **Create a plan, spawn a worker.** This is the default.
+3. **Is it truly trivial?** (single-line typo, config value — something you can
+   fix without reading more than one file) → Ask the user if they want you to
+   fix it directly or spawn a worker.
+
+If you're unsure, spawn a worker. Delegating is always safe; doing it yourself
+eats context you can't get back.
+
+**Anti-pattern**: Editing code yourself while the worker pool sits idle.
+**Anti-pattern**: Reading code "to understand the change" and then making the fix
+since you're "already here." That's how context windows die.
+
 ## Rules
 - NEVER sleep, poll, or loop to monitor workers — after spawning and assigning, you are DONE. Wait for the user or incoming messages.
 - ONE worker per feature — a single worker implements the entire plan from start to finish
