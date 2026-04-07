@@ -24,7 +24,7 @@ import (
 	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "0.3.0"
+const version = "0.3.1"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -1675,7 +1675,7 @@ func renderMonitor(b *strings.Builder, cfg *config.Config, activeProj *project.P
 		}
 		var filtered []plan.Plan
 		for _, p := range allPlans {
-			if projectWorkers[p.WorkerName] {
+			if p.WorkerName == "" || projectWorkers[p.WorkerName] {
 				filtered = append(filtered, p)
 			}
 		}
