@@ -23,7 +23,7 @@ import (
 	"github.com/tomy/v1/internal/worker"
 )
 
-const version = "0.0.4"
+const version = "0.1.0"
 
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "error:", msg)
@@ -195,7 +195,7 @@ func main() {
 		cmdRun(os.Args[2:], plans, tasks, workers, activeProj)
 
 	case "monitor":
-		cmdMonitor(os.Args[2:], plans, tasks)
+		cmdMonitor(os.Args[2:], plans, tasks, workers, activeProj)
 
 	case "completion":
 		cmdCompletion(os.Args[2:])
@@ -1640,7 +1640,7 @@ func renderPlan(b *strings.Builder, p plan.Plan, planTasks []task.Task) {
 	}
 }
 
-func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.Store, interval int) {
+func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.Store, workers *worker.Manager, activeProj *project.Project, interval int) {
 	b.Reset()
 	b.WriteString("\033[H\033[2J")
 
@@ -1650,7 +1650,29 @@ func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.St
 		return
 	}
 
-	fmt.Fprintf(b, "%stomy monitor%s  (every %ds, Ctrl+C to exit)\n", colorBold, colorReset, interval)
+	// Filter plans to active project
+	if activeProj != nil {
+		allWorkers, _ := workers.List()
+		projectWorkers := make(map[string]bool)
+		for _, w := range allWorkers {
+			if w.ProjectID == activeProj.ID {
+				projectWorkers[w.Name] = true
+			}
+		}
+		var filtered []plan.Plan
+		for _, p := range allPlans {
+			if projectWorkers[p.WorkerName] {
+				filtered = append(filtered, p)
+			}
+		}
+		allPlans = filtered
+	}
+
+	if activeProj != nil {
+		fmt.Fprintf(b, "%stomy monitor%s  [%s]  (every %ds, Ctrl+C to exit)\n", colorBold, colorReset, activeProj.Name, interval)
+	} else {
+		fmt.Fprintf(b, "%stomy monitor%s  (every %ds, Ctrl+C to exit)\n", colorBold, colorReset, interval)
+	}
 	b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	if len(allPlans) == 0 {
@@ -1667,7 +1689,7 @@ func renderMonitor(b *strings.Builder, planStore *plan.Store, taskStore *task.St
 	fmt.Fprintf(b, "%sLast updated: %s%s\n", colorGray, time.Now().Format("15:04:05"), colorReset)
 }
 
-func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store) {
+func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store, workers *worker.Manager, activeProj *project.Project) {
 	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
 	interval := fs.Int("interval", 2, "refresh interval in seconds")
 	fs.Parse(args)
@@ -1681,7 +1703,7 @@ func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store) {
 	defer ticker.Stop()
 
 	// Render immediately
-	renderMonitor(&b, plans, tasks, *interval)
+	renderMonitor(&b, plans, tasks, workers, activeProj, *interval)
 	fmt.Print(b.String())
 
 	for {
@@ -1690,7 +1712,7 @@ func cmdMonitor(args []string, plans *plan.Store, tasks *task.Store) {
 			fmt.Println("\nMonitor stopped.")
 			return
 		case <-ticker.C:
-			renderMonitor(&b, plans, tasks, *interval)
+			renderMonitor(&b, plans, tasks, workers, activeProj, *interval)
 			fmt.Print(b.String())
 		}
 	}
